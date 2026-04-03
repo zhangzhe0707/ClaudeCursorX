@@ -14,7 +14,9 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-
+import logging
+# fastmcp 默认将 INFO 日志输出到 stderr，Cursor 会将其误标为 error，统一静默
+logging.basicConfig(level=logging.WARNING)
 
 def memory_save(
     key: str,
