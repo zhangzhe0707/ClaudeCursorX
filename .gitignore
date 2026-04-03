@@ -26,4 +26,5 @@ Thumbs.db
 .cursor/team-memory/
 .cursor/crons.json
 .cursor
-.docs/TOUTIAO-ANALYSIS.md
+# Local-only directories (not synced to remote)
+claude-code/
