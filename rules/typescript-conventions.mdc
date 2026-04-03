@@ -1,0 +1,16 @@
+---
+description: TypeScript coding conventions for this project
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# TypeScript Conventions
+
+- Use strict TypeScript. No `any` unless absolutely necessary.
+- Prefer `interface` for object shapes, `type` for unions/intersections.
+- Always handle errors explicitly — no empty `catch {}` blocks.
+- Use `async`/`await` over `.then()` chains.
+- Export types with `export type` when the export is type-only.
+- Prefer named exports over default exports.
+- Keep functions under 50 lines. Extract helpers if longer.
+- Use meaningful variable names — no single-letter variables except loop counters.

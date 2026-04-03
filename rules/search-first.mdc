@@ -1,0 +1,22 @@
+---
+description: Enforces efficient search-before-read patterns to minimize context waste
+alwaysApply: true
+---
+
+# Search First
+
+## Before reading a file
+
+- If you know the **path** → `Read` directly.
+- If you know an **exact string** → `Grep` to locate, then `Read` with `offset`/`limit`.
+- If you know a **filename pattern** → `Glob` to find, then `Read`.
+- If you only know the **concept** → `SemanticSearch`, then `Read` the relevant results.
+
+## Large files (> 300 lines)
+
+Never read a large file entirely unless you are about to rewrite it.
+Use `Grep` to find the relevant section, then `Read` with `offset` and `limit`.
+
+## Exploration
+
+For broad codebase exploration, use `Task` with `subagent_type="explore"` to preserve main context.

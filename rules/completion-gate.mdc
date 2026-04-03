@@ -1,0 +1,33 @@
+---
+description: Requires verification before declaring any task complete
+alwaysApply: true
+---
+
+# Completion Gate
+
+Before saying "done", you MUST have:
+
+1. **Read back** every edited file to confirm the change is correct.
+2. **Run `ReadLints`** on all edited files — zero new errors introduced.
+3. **Run tests** if they exist for the changed code (`Shell` with relevant test command).
+4. **Compared result to request** — does the change actually accomplish what was asked?
+
+If any gate fails, fix the issue and re-verify. Do not skip gates.
+
+## Memory extraction (post-completion)
+
+After passing all gates, consider whether to persist knowledge:
+
+5. **Save decisions** — If the task involved non-obvious decisions (architecture choices, tricky workarounds, discovered gotchas), use `memory_save` to persist them for future sessions.
+6. **Team knowledge** — If the decision applies to all team members (coding conventions, API contracts, known pitfalls), use `team_memory_save` instead.
+
+This is not mandatory for trivial tasks, but important decisions SHOULD be recorded.
+
+## Summary format
+
+```
+**Changes:** list of files and what changed
+**Verification:** Lint ✓ | Tests ✓ or N/A | Build ✓ or N/A
+**Memories:** saved decision X / none needed
+**Notes:** anything the user should review
+```

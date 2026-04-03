@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "agent-tools": {
+      "command": "python",
+      "args": [".cursor/mcp-servers/agent-tools/server.py"],
+      "env": {}
+    },
+    "code-intel": {
+      "command": "python",
+      "args": [".cursor/mcp-servers/code-intel/server.py"],
+      "env": {}
+    },
+    "test-runner": {
+      "command": "python",
+      "args": [".cursor/mcp-servers/test-runner/server.py"],
+      "env": {}
+    },
+    "git-ops": {
+      "command": "python",
+      "args": [".cursor/mcp-servers/git-ops/server.py"],
+      "env": {}
+    },
+    "dev-utils": {
+      "command": "python",
+      "args": [".cursor/mcp-servers/dev-utils/server.py"],
+      "env": {}
+    }
+  }
+}
