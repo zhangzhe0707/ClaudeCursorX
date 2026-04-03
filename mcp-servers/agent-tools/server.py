@@ -19,11 +19,15 @@ Agent Tools MCP Server — 为 Cursor 提供 Claude Code 风格的增强工具�
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+# fastmcp 默认将 INFO 日志输出到 stderr，Cursor 会将其误标为 error，统一静默
+logging.basicConfig(level=logging.WARNING)
 
 try:
     from mcp.server.fastmcp import FastMCP

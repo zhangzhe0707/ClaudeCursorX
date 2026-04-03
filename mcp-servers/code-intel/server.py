@@ -16,12 +16,16 @@ Code Intelligence MCP Server — 代码深度分析工具集。
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+# fastmcp 默认将 INFO 日志输出到 stderr，Cursor 会将其误标为 error，统一静默
+logging.basicConfig(level=logging.WARNING)
 
 try:
     from mcp.server.fastmcp import FastMCP
