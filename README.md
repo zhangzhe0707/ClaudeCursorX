@@ -281,6 +281,7 @@ Your agent system prompt here...
 | [SKILL-ANALYSIS.md](docs/SKILL-ANALYSIS.md) | Skill 方案设计分析 |
 | [MULTI-AGENT-ANALYSIS.md](docs/MULTI-AGENT-ANALYSIS.md) | 多 Agent 可行性分析 |
 | [GAP-ANALYSIS.md](docs/GAP-ANALYSIS.md) | Claude Code vs Cursor 差距分析 |
+| [PLUGIN-ECOSYSTEM-ANALYSIS.md](docs/PLUGIN-ECOSYSTEM-ANALYSIS.md) | Claude Code 插件生态系统分析（v2.1.91） |
 
 ## 项目结构
 
@@ -606,6 +607,7 @@ We analyzed the core architecture of Claude Code, identified the capability boun
 | [SKILL-ANALYSIS.md](docs/SKILL-ANALYSIS.md) | Skill design analysis |
 | [MULTI-AGENT-ANALYSIS.md](docs/MULTI-AGENT-ANALYSIS.md) | Multi-agent feasibility analysis |
 | [GAP-ANALYSIS.md](docs/GAP-ANALYSIS.md) | Claude Code vs Cursor gap analysis |
+| [PLUGIN-ECOSYSTEM-ANALYSIS.md](docs/PLUGIN-ECOSYSTEM-ANALYSIS.md) | Claude Code plugin ecosystem analysis (v2.1.91) |
 
 ### Project Structure
 
