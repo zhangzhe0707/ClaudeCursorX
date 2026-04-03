@@ -339,46 +339,314 @@ ClaudeCursorX is a ready-to-use enhancement toolkit for Cursor IDE. Through a fo
 
 This is not a Claude Code clone — it's a native enhancement designed for Cursor's architecture, informed by deep analysis of Claude Code's source code.
 
-### Quick Start
+### Architecture
 
-```bash
-# Clone
-git clone https://github.com/YOUR_USERNAME/ClaudeCursorX.git
-cd ClaudeCursorX
-
-# Install into your project
-./install.sh /path/to/your/project
-
-# Or use symlink mode
-./install.sh --link /path/to/your/project
+```mermaid
+graph TB
+    subgraph toolkit [ClaudeCursorX]
+        direction TB
+        
+        subgraph layer1 [Layer 1: MCP Servers - 34 Tools]
+            AT[agent-tools<br/>token_count, project_map<br/>dependency_graph, test_runner]
+            CI[code-intel<br/>analyze_impact, module_summary<br/>symbol_references, memory_*]
+            TR[test-runner<br/>smart_test, regression_check<br/>coverage_report, test_skeleton]
+            GO[git-ops<br/>safe_commit, review_diff<br/>create_pr, worktree_ops]
+            DU[dev-utils<br/>release_notes, tool_search<br/>lsp_diagnostics, cron_manager]
+        end
+        
+        subgraph layer2 [Layer 2: Skills - 4 Behavior Injections]
+            S1[agent-loop-orchestrator<br/>Core Loop + 10 Patterns]
+            S2[tool-strategy<br/>Tool Selection + Advanced Orchestration]
+            S3[context-management<br/>Context Management + Large Codebase Navigation]
+            S4[quality-gate<br/>Quality Gates + Multi-language Checklists]
+        end
+        
+        subgraph layer3 [Layer 3: Rules - 4 Hard Constraints]
+            R1[agent-discipline]
+            R2[completion-gate]
+            R3[search-first]
+            R4[typescript-conventions]
+        end
+        
+        subgraph layer4 [Layer 4: Subagents - 4 Experts]
+            A1[architect]
+            A2[code-reviewer]
+            A3[debugger]
+            A4[security-reviewer]
+        end
+    end
+    
+    layer1 --> layer2
+    layer2 --> layer3
+    layer3 --> layer4
 ```
 
-### What's Included
+### Feature List
 
-| Layer | Count | Description |
-|-------|-------|-------------|
-| **MCP Servers** | 5 servers, 34 tools | Custom tools for code intel, testing, git ops, dev utilities, and memory |
-| **Skills** | 4 skills, 8 files | Behavior injection for agent loop, tool strategy, context management, quality gates |
-| **Rules** | 4 rules | Hard constraints: read-before-write, verify-before-done, search-first, coding conventions |
-| **Subagents** | 4 agents | Specialized experts: architect, code-reviewer, debugger, security-reviewer |
+#### MCP Servers (34 Tools)
 
-### Requirements
+| Server | Tool | Description |
+|--------|------|-------------|
+| **agent-tools** | `token_count` | Estimate token count for text |
+| | `project_map` | Generate project structure map |
+| | `dependency_graph` | Analyze module dependencies |
+| | `test_runner` | Run test cases |
+| **code-intel** | `analyze_impact` | Analyze code change impact scope |
+| | `module_summary` | Generate module summary |
+| | `find_test_coverage` | Find test coverage information |
+| | `symbol_references` | Find symbol references |
+| | `dependency_graph` | Dependency analysis |
+| | `project_overview` | Project overview |
+| | `memory_save` | Save decision memory to persistent file |
+| | `memory_search` | Search historical memory |
+| | `memory_read` | Read all memories |
+| | `team_memory_sync` | Team memory Git sync |
+| | `team_memory_save` | Save team shared memory |
+| **test-runner** | `smart_test` | Smart testing (auto-detect framework) |
+| | `regression_check` | Regression test check |
+| | `test_skeleton` | Generate test skeleton code |
+| | `test_report` | Generate test report |
+| | `coverage_report` | Test coverage report |
+| **git-ops** | `safe_commit` | Safe commit (with pre-checks) |
+| | `review_diff` | Code diff review |
+| | `create_pr` | Create Pull Request |
+| | `stash_switch` | Stash management and branch switching |
+| | `worktree_ops` | Git Worktree operations |
+| | `branch_status` | Branch status overview |
+| **dev-utils** | `release_notes` | Generate release notes from git log |
+| | `tool_search` | Search all available MCP tools |
+| | `workflow_runner` | Workflow management |
+| | `terminal_capture` | Terminal output capture |
+| | `config_manager` | Project configuration management |
+| | `cron_manager` | Simple scheduled tasks |
+| | `lsp_diagnostics` | LSP deep diagnostics |
+| | `prompt_suggestion` | Smart next-step suggestions |
+
+#### Skills (4 Sets)
+
+| Skill | Description | Files |
+|-------|-------------|-------|
+| **agent-loop-orchestrator** | Core Agent loop logic with 10 advanced patterns (deep review, sub-agent coordination, session guidance, etc.) | `SKILL.md` + `patterns.md` |
+| **tool-strategy** | Tool selection strategies and advanced orchestration patterns (parallel search, large file handling, context reuse) | `SKILL.md` + `advanced-patterns.md` |
+| **context-management** | Context token budget management, efficient navigation strategies for large codebases | `SKILL.md` + `large-codebase-guide.md` |
+| **quality-gate** | Quality gate workflow with multi-language checklists for TypeScript/Python/Rust and more | `SKILL.md` + `checklists.md` |
+
+#### Rules (4 Rules)
+
+| Rule | Purpose | Scope |
+|------|---------|-------|
+| **agent-discipline** | Read-before-write, verify-after-change, no blind edits | All files |
+| **completion-gate** | Must verify + extract memory before completion | All files |
+| **search-first** | Search before full-file reading | All files |
+| **typescript-conventions** | TypeScript coding conventions | `*.ts, *.tsx` |
+
+#### Subagents (4 Agents)
+
+| Agent | Specialty | Trigger Scenarios |
+|-------|-----------|-------------------|
+| **architect** | Architecture design and technical decisions | Large feature planning, system design |
+| **code-reviewer** | Code review | After code changes, before PR |
+| **debugger** | Debugging and problem diagnosis | Runtime errors, test failures |
+| **security-reviewer** | Security audit | Changes related to auth/encryption/input handling |
+
+### Installation
+
+#### Prerequisites
 
 - [Cursor IDE](https://cursor.sh/) (latest)
 - Python 3.10+
 - pip
 
-### Installation Options
+#### Option 1: One-click Install
 
 ```bash
-./install.sh /path/to/project           # Full install (copy mode)
-./install.sh --link /path/to/project     # Symlink mode (auto-sync)
-./install.sh --mcp-only /path/to/project # MCP Servers only
+git clone https://github.com/YOUR_USERNAME/ClaudeCursorX.git
+cd ClaudeCursorX
+
+# Install to target project (copy mode)
+./install.sh /path/to/your/project
+
+# Or use symlink mode (auto-sync when toolkit updates)
+./install.sh --link /path/to/your/project
+```
+
+#### Option 2: Manual Install
+
+1. Clone this repository:
+
+```bash
+git clone https://github.com/YOUR_USERNAME/ClaudeCursorX.git
+```
+
+2. Copy the desired components to the target project's `.cursor/` directory:
+
+```bash
+# MCP Servers
+cp -r ClaudeCursorX/mcp-servers/ your-project/.cursor/mcp-servers/
+
+# Skills
+cp -r ClaudeCursorX/skills/ your-project/.cursor/skills/
+
+# Rules
+cp -r ClaudeCursorX/rules/ your-project/.cursor/rules/
+
+# Subagents
+cp -r ClaudeCursorX/agents/ your-project/.cursor/agents/
+```
+
+3. Copy MCP configuration:
+
+```bash
+cp ClaudeCursorX/templates/mcp.json your-project/.cursor/mcp.json
+```
+
+4. Install Python dependencies:
+
+```bash
+pip install -r ClaudeCursorX/requirements.txt
+```
+
+#### Option 3: Selective Install
+
+```bash
+# MCP Servers only
+./install.sh --mcp-only /path/to/your/project
+
+# Skills only
+./install.sh --skills-only /path/to/your/project
+
+# Rules only
+./install.sh --rules-only /path/to/your/project
+
+# Subagents only
+./install.sh --agents-only /path/to/your/project
+```
+
+### Usage
+
+#### Works Immediately After Install
+
+- **Rules** and **Skills** are automatically loaded when Cursor opens the project
+- **MCP Servers** start automatically based on `.cursor/mcp.json`
+- **Subagents** are invoked on-demand by Cursor when needed
+
+#### Using MCP Tools
+
+Call them directly in Cursor conversations:
+
+```
+Analyze the impact of this code change
+→ Cursor will automatically call the analyze_impact tool
+
+Run regression tests
+→ Cursor will automatically call the regression_check tool
+
+Generate release notes for this version
+→ Cursor will automatically call the release_notes tool
+```
+
+#### Memory System
+
+The toolkit includes built-in cross-session memory persistence:
+
+- **Personal Memory**: `memory_save` / `memory_search` / `memory_read` — stored in `.cursor/memory.md`
+- **Team Memory**: `team_memory_save` / `team_memory_sync` — stored in `.cursor/team-memory/`, synced via Git
+
+### Customization
+
+#### Adding a New Rule
+
+Create a `.mdc` file in the `rules/` directory:
+
+```yaml
+---
+description: Your rule description
+alwaysApply: true
+---
+
+# Your Rule Name
+
+1. Rule content...
+```
+
+#### Adding a New Skill
+
+Create a subdirectory with `SKILL.md` in the `skills/` directory:
+
+```
+skills/
+└── my-skill/
+    ├── SKILL.md          # Main file (injected each turn)
+    └── details.md        # Supplementary file (read on demand)
+```
+
+#### Adding a New Subagent
+
+Create a `.md` file in the `agents/` directory:
+
+```yaml
+---
+name: my-agent
+description: >-
+  What this agent does and when to use it.
+---
+
+Your agent system prompt here...
 ```
 
 ### Design Background
 
-This project originated from a deep analysis of [Claude Code](https://docs.anthropic.com/en/docs/claude-code)'s source code. We identified the capability boundaries that can be replicated within Cursor and designed this four-layer enhancement. See the `docs/` directory for detailed analysis.
+This project originated from a deep analysis of [Claude Code](https://docs.anthropic.com/en/docs/claude-code)'s source code. Claude Code is Anthropic's CLI coding assistant with a complete Agent Loop, 40+ tools, multi-agent coordination, and more.
+
+We analyzed the core architecture of Claude Code, identified the capability boundaries that can be replicated within Cursor, and designed this four-layer enhancement. See the `docs/` directory for detailed analysis:
+
+| Document | Content |
+|----------|---------|
+| [ANALYSIS.md](docs/ANALYSIS.md) | Claude Code source architecture analysis |
+| [SKILL-ANALYSIS.md](docs/SKILL-ANALYSIS.md) | Skill design analysis |
+| [MULTI-AGENT-ANALYSIS.md](docs/MULTI-AGENT-ANALYSIS.md) | Multi-agent feasibility analysis |
+| [GAP-ANALYSIS.md](docs/GAP-ANALYSIS.md) | Claude Code vs Cursor gap analysis |
+
+### Project Structure
+
+```
+ClaudeCursorX/
+├── README.md              # This file
+├── LICENSE                # GPL 3.0
+├── install.sh             # One-click install script
+├── requirements.txt       # Python dependencies
+├── mcp-servers/           # 5 MCP Servers (34 tools)
+│   ├── agent-tools/       # Basic tools: token count, project map, dependency graph, testing
+│   ├── code-intel/        # Code intelligence: impact analysis, symbol references, memory system
+│   ├── test-runner/       # Test enhancement: smart testing, regression check, coverage
+│   ├── git-ops/           # Git operations: safe commit, PR, Worktree
+│   └── dev-utils/         # Dev utilities: release notes, LSP, workflow, config
+├── skills/                # 4 Skills (behavior injection)
+├── rules/                 # 4 Rules (hard constraints)
+├── agents/                # 4 Subagents (expert roles)
+├── docs/                  # Design analysis documents
+└── templates/             # Configuration templates
+    └── mcp.json
+```
+
+### Contributing
+
+Contributions are welcome! Here's how to participate:
+
+1. Fork this repository
+2. Create a feature branch (`git checkout -b feature/amazing-tool`)
+3. Commit your changes (`git commit -m 'Add amazing tool'`)
+4. Push the branch (`git push origin feature/amazing-tool`)
+5. Create a Pull Request
+
+#### Contribution Areas
+
+- Add new MCP tools (new servers or tools in existing servers)
+- Add new Skills or improve existing Skill patterns
+- Add new Rules (coding conventions for other languages, etc.)
+- Add new Subagents (e.g., performance-profiler, docs-writer, etc.)
+- Improve the install script (Windows support, more shells)
+- Improve documentation and usage examples
 
 ### License
 
