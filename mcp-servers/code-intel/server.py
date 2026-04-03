@@ -761,19 +761,28 @@ if _memory_module_path.exists():
         return _team_memory_save(key, content, category, project_dir)
 
 
-# ─── MCP Prompts（提示词模板） ──────────────────────────────────────────────────
+# ─── MCP Prompts（提示词模板 / Prompt Templates） ───────────────────────────────
 # 对应 Claude Code 的 prompts/list + prompts/get 协议，注册为 slash command
 # 在 Cursor 中通过 /mcp__code-intel__<name> 触发
+# 所有 Prompt 支持 language 参数: "zh"（默认）或 "en"
+
+def _lang(language: str) -> bool:
+    """返回 True 表示使用中文，False 表示使用英文。"""
+    return language.strip().lower() not in ("en", "english")
+
 
 @mcp.prompt()
-def code_review(file_path: str, focus: str = "全面审查") -> str:
-    """对指定文件进行代码审查。
+def code_review(file_path: str, focus: str = "", language: str = "zh") -> str:
+    """Perform a code review on the specified file. / 对指定文件进行代码审查。
 
     Args:
-        file_path: 要审查的文件路径
-        focus: 审查重点，如"安全性"、"性能"、"可读性"、"全面审查"
+        file_path: Path to the file to review / 要审查的文件路径
+        focus: Review focus, e.g. "security", "performance", "readability" / 审查重点，如"安全性"、"性能"、"可读性"
+        language: Response language — "zh" (default) or "en" / 响应语言，"zh"（默认）或 "en"
     """
-    return f"""请对以下文件进行代码审查，重点关注：{focus}
+    if _lang(language):
+        focus_text = focus or "全面审查"
+        return f"""请对以下文件进行代码审查，重点关注：{focus_text}
 
 文件：{file_path}
 
@@ -786,18 +795,35 @@ def code_review(file_path: str, focus: str = "全面审查") -> str:
 6. **错误处理** — 异常是否被妥善捕获和处理
 
 请先读取文件内容，再给出结构化的审查报告，对每个问题标注严重程度（🔴 严重 / 🟡 建议 / 🟢 优化）。"""
+    else:
+        focus_text = focus or "comprehensive review"
+        return f"""Please perform a code review on the following file, focusing on: {focus_text}
+
+File: {file_path}
+
+Review dimensions:
+1. **Correctness** — Is the logic correct? Are edge cases handled?
+2. **Security** — Any injection, privilege escalation, or sensitive data exposure risks?
+3. **Performance** — N+1 queries, unnecessary loops, memory leaks?
+4. **Readability** — Clear naming, single responsibility, sufficient comments?
+5. **Testability** — Easy to unit test? Are dependencies injectable?
+6. **Error handling** — Are exceptions properly caught and handled?
+
+Read the file first, then provide a structured review report. Label each issue with severity (🔴 Critical / 🟡 Suggestion / 🟢 Optimization)."""
 
 
 @mcp.prompt()
-def bug_analysis(symptom: str, file_path: str = "") -> str:
-    """分析 Bug 的根因并给出修复方案。
+def bug_analysis(symptom: str, file_path: str = "", language: str = "zh") -> str:
+    """Analyze the root cause of a bug and provide a fix. / 分析 Bug 的根因并给出修复方案。
 
     Args:
-        symptom: Bug 的表现描述，如报错信息、异常行为
-        file_path: 相关文件路径（可选）
+        symptom: Bug description, e.g. error message or abnormal behavior / Bug 表现，如报错信息或异常行为
+        file_path: Related file path (optional) / 相关文件路径（可选）
+        language: Response language — "zh" (default) or "en" / 响应语言，"zh"（默认）或 "en"
     """
-    related = f"\n相关文件：{file_path}" if file_path else ""
-    return f"""请分析以下 Bug 并给出根因定位与修复方案。
+    if _lang(language):
+        related = f"\n相关文件：{file_path}" if file_path else ""
+        return f"""请分析以下 Bug 并给出根因定位与修复方案。
 
 Bug 表现：{symptom}{related}
 
@@ -809,17 +835,34 @@ Bug 表现：{symptom}{related}
 5. **回归验证** — 建议添加哪些测试用例防止复现
 
 请使用 analyze_impact 工具分析变更影响范围，确保修复不引入新问题。"""
+    else:
+        related = f"\nRelated file: {file_path}" if file_path else ""
+        return f"""Please analyze the following bug and provide root cause analysis and fix.
+
+Bug symptom: {symptom}{related}
+
+Analysis steps:
+1. **Reproduction path** — Describe the sequence of actions that trigger the bug
+2. **Root cause** — Identify the exact location and reason in the code
+3. **Impact scope** — Does this bug affect other features or modules?
+4. **Fix** — Provide a minimal and safe fix with code
+5. **Regression verification** — Suggest test cases to prevent recurrence
+
+Use the analyze_impact tool to assess the change scope and ensure the fix doesn't introduce new issues."""
 
 
 @mcp.prompt()
-def refactor_plan(file_path: str, goal: str = "提升可维护性") -> str:
-    """为指定文件制定重构计划。
+def refactor_plan(file_path: str, goal: str = "", language: str = "zh") -> str:
+    """Create a refactoring plan for the specified file. / 为指定文件制定重构计划。
 
     Args:
-        file_path: 要重构的文件路径
-        goal: 重构目标，如"提升可维护性"、"性能优化"、"拆分模块"
+        file_path: Path to the file to refactor / 要重构的文件路径
+        goal: Refactoring goal, e.g. "improve maintainability", "split module" / 重构目标，如"提升可维护性"、"拆分模块"
+        language: Response language — "zh" (default) or "en" / 响应语言，"zh"（默认）或 "en"
     """
-    return f"""请为以下文件制定重构计划，目标：{goal}
+    if _lang(language):
+        goal_text = goal or "提升可维护性"
+        return f"""请为以下文件制定重构计划，目标：{goal_text}
 
 文件：{file_path}
 
@@ -832,17 +875,35 @@ def refactor_plan(file_path: str, goal: str = "提升可维护性") -> str:
 6. **优先级排序** — 哪些改动收益最高，应优先处理
 
 请先用 module_summary 获取模块概览，再制定计划。遵循"重构不改行为"原则。"""
+    else:
+        goal_text = goal or "improve maintainability"
+        return f"""Please create a refactoring plan for the following file. Goal: {goal_text}
+
+File: {file_path}
+
+The plan should include:
+1. **Current state analysis** — What problems exist (tech debt, code smells)?
+2. **Target state** — What should the code look like after refactoring?
+3. **Step breakdown** — Split refactoring into independent, testable steps (≤200 lines each)
+4. **Risk assessment** — Which parts are error-prone and need extra care?
+5. **Testing strategy** — How to verify behavior is unchanged before and after?
+6. **Priority order** — Which changes yield the highest return?
+
+Use module_summary to get an overview first. Follow the principle: refactoring must not change behavior."""
 
 
 @mcp.prompt()
-def security_audit(scope: str = ".", vulnerability_type: str = "全部") -> str:
-    """对项目进行安全审计。
+def security_audit(scope: str = ".", vulnerability_type: str = "", language: str = "zh") -> str:
+    """Perform a security audit on the project. / 对项目进行安全审计。
 
     Args:
-        scope: 审计范围，文件路径或目录（默认当前目录）
-        vulnerability_type: 漏洞类型，如"注入"、"认证"、"加密"、"全部"
+        scope: Audit scope — file path or directory / 审计范围，文件路径或目录
+        vulnerability_type: Vulnerability type, e.g. "injection", "auth", "crypto" / 漏洞类型，如"注入"、"认证"、"加密"
+        language: Response language — "zh" (default) or "en" / 响应语言，"zh"（默认）或 "en"
     """
-    return f"""请对以下范围进行安全审计，重点关注：{vulnerability_type}
+    if _lang(language):
+        vtype = vulnerability_type or "全部"
+        return f"""请对以下范围进行安全审计，重点关注：{vtype}
 
 审计范围：{scope}
 
@@ -855,18 +916,35 @@ def security_audit(scope: str = ".", vulnerability_type: str = "全部") -> str:
 6. **配置错误** — 默认凭据、调试模式开启、宽松的 CORS/CSP
 
 对每个发现标注 CVSS 风险等级，并给出具体修复代码示例。"""
+    else:
+        vtype = vulnerability_type or "all"
+        return f"""Please perform a security audit on the following scope, focusing on: {vtype}
+
+Audit scope: {scope}
+
+Checklist:
+1. **Injection** — SQL injection, command injection, LDAP injection, XSS
+2. **Authentication & Authorization** — Weak passwords, session fixation, privilege escalation, JWT issues
+3. **Sensitive data exposure** — Plaintext passwords, hardcoded API keys, log leakage, insecure transport
+4. **Cryptographic failures** — Weak algorithms (MD5/SHA1), hardcoded keys, insecure RNG
+5. **Vulnerable dependencies** — Third-party libraries with known CVEs
+6. **Misconfiguration** — Default credentials, debug mode enabled, permissive CORS/CSP
+
+Label each finding with a CVSS risk level and provide specific remediation code examples."""
 
 
 @mcp.prompt()
-def explain_code(file_path: str, section: str = "") -> str:
-    """深度解释代码的设计意图与工作原理。
+def explain_code(file_path: str, section: str = "", language: str = "zh") -> str:
+    """Deeply explain the design intent and mechanics of code. / 深度解释代码的设计意图与工作原理。
 
     Args:
-        file_path: 要解释的文件路径
-        section: 特定函数或类名（留空则解释整个文件）
+        file_path: Path to the file to explain / 要解释的文件路径
+        section: Specific function or class name (leave empty for whole file) / 特定函数或类名（留空则解释整个文件）
+        language: Response language — "zh" (default) or "en" / 响应语言，"zh"（默认）或 "en"
     """
-    target = f"其中的 `{section}`" if section else "整个文件"
-    return f"""请深度解释 {file_path} 中{target}的代码。
+    if _lang(language):
+        target = f"其中的 `{section}`" if section else "整个文件"
+        return f"""请深度解释 {file_path} 中{target}的代码。
 
 解释维度：
 1. **整体设计** — 该模块的职责和在系统中的定位
@@ -877,17 +955,33 @@ def explain_code(file_path: str, section: str = "") -> str:
 6. **边界条件** — 哪些输入会触发特殊分支
 
 适合读者：熟悉该语言但不了解该模块业务背景的开发者。请用简洁清晰的语言，避免直接复读代码。"""
+    else:
+        target = f"`{section}` in" if section else "the entire"
+        return f"""Please deeply explain {target} {file_path}.
+
+Explanation dimensions:
+1. **Overall design** — The module's responsibility and its role in the system
+2. **Core algorithm** — How the key logic works (explain with text + pseudocode)
+3. **Data flow** — The complete path from input to output
+4. **Design decisions** — Why it's designed this way and what trade-offs were made
+5. **Dependencies** — What it depends on and what depends on it
+6. **Edge cases** — Which inputs trigger special branches
+
+Target audience: developers familiar with the language but unfamiliar with this module's business context. Use clear, concise language — don't just paraphrase the code."""
 
 
 @mcp.prompt()
-def write_tests(file_path: str, test_type: str = "单元测试") -> str:
-    """为指定文件生成测试方案。
+def write_tests(file_path: str, test_type: str = "", language: str = "zh") -> str:
+    """Generate a test plan for the specified file. / 为指定文件生成测试方案。
 
     Args:
-        file_path: 要测试的文件路径
-        test_type: 测试类型，如"单元测试"、"集成测试"、"E2E测试"
+        file_path: Path to the file to test / 要测试的文件路径
+        test_type: Test type, e.g. "unit", "integration", "e2e" / 测试类型，如"单元测试"、"集成测试"、"E2E测试"
+        language: Response language — "zh" (default) or "en" / 响应语言，"zh"（默认）或 "en"
     """
-    return f"""请为 {file_path} 编写完整的{test_type}。
+    if _lang(language):
+        ttype = test_type or "单元测试"
+        return f"""请为 {file_path} 编写完整的{ttype}。
 
 测试策略：
 1. **覆盖分析** — 先用 find_test_coverage 检查已有测试，避免重复
@@ -901,18 +995,36 @@ def write_tests(file_path: str, test_type: str = "单元测试") -> str:
 5. **测试命名** — 遵循 `test_<功能>_<场景>_<期望结果>` 格式
 
 请使用项目已有的测试框架，先用 test_skeleton 生成骨架再填充内容。目标覆盖率 ≥ 80%。"""
+    else:
+        ttype = test_type or "unit tests"
+        return f"""Please write comprehensive {ttype} for {file_path}.
+
+Testing strategy:
+1. **Coverage analysis** — Use find_test_coverage first to avoid duplicating existing tests
+2. **Test case design**:
+   - Happy path: main functionality works as expected
+   - Boundary values: null, zero, max, min
+   - Error paths: invalid input, network errors, insufficient permissions
+   - Concurrency (if applicable): race conditions, idempotency
+3. **Mock strategy** — Which external dependencies need mocking and how
+4. **Assertion quality** — Be precise; avoid overly broad assertions (e.g. just asserting not null)
+5. **Naming convention** — Follow `test_<feature>_<scenario>_<expected_result>` format
+
+Use the project's existing test framework. Generate a skeleton with test_skeleton first, then fill in the content. Target coverage ≥ 80%."""
 
 
 @mcp.prompt()
-def performance_review(file_path: str, bottleneck: str = "") -> str:
-    """分析代码性能瓶颈并给出优化方案。
+def performance_review(file_path: str, bottleneck: str = "", language: str = "zh") -> str:
+    """Analyze performance bottlenecks and suggest optimizations. / 分析代码性能瓶颈并给出优化方案。
 
     Args:
-        file_path: 要分析的文件路径
-        bottleneck: 已知的性能问题描述（可选）
+        file_path: Path to the file to analyze / 要分析的文件路径
+        bottleneck: Known performance issue description (optional) / 已知的性能问题描述（可选）
+        language: Response language — "zh" (default) or "en" / 响应语言，"zh"（默认）或 "en"
     """
-    known = f"\n已知瓶颈：{bottleneck}" if bottleneck else ""
-    return f"""请分析 {file_path} 的性能问题并给出优化方案。{known}
+    if _lang(language):
+        known = f"\n已知瓶颈：{bottleneck}" if bottleneck else ""
+        return f"""请分析 {file_path} 的性能问题并给出优化方案。{known}
 
 分析维度：
 1. **复杂度分析** — 时间复杂度和空间复杂度（Big-O 标注）
@@ -924,16 +1036,31 @@ def performance_review(file_path: str, bottleneck: str = "") -> str:
 
 对每项优化给出：预期收益（高/中/低）、实现难度（高/中/低）、示例代码。
 优先推荐高收益低难度的改动。"""
+    else:
+        known = f"\nKnown bottleneck: {bottleneck}" if bottleneck else ""
+        return f"""Please analyze performance issues in {file_path} and suggest optimizations.{known}
+
+Analysis dimensions:
+1. **Complexity** — Time and space complexity (Big-O notation)
+2. **Database/IO** — N+1 queries, missing indexes, full table scans, synchronous blocking IO
+3. **Memory usage** — Memory leaks, unnecessary copies of large objects, caching strategy
+4. **Computation** — Repeated calculations, cacheable results, loop optimizations, vectorization
+5. **Concurrency** — Serialized parallelizable operations, lock contention, thread pool config
+6. **Network** — Redundant requests, uncompressed responses, missing batching
+
+For each optimization, provide: expected gain (High/Medium/Low), implementation effort (High/Medium/Low), and example code. Prioritize high-gain, low-effort changes."""
 
 
 @mcp.prompt()
-def api_design_review(file_path: str) -> str:
-    """审查 API 设计的合理性与一致性。
+def api_design_review(file_path: str, language: str = "zh") -> str:
+    """Review the rationality and consistency of API design. / 审查 API 设计的合理性与一致性。
 
     Args:
-        file_path: API 定义文件路径（路由、控制器、schema 等）
+        file_path: API definition file path (routes, controllers, schemas, etc.) / API 定义文件路径
+        language: Response language — "zh" (default) or "en" / 响应语言，"zh"（默认）或 "en"
     """
-    return f"""请审查 {file_path} 的 API 设计。
+    if _lang(language):
+        return f"""请审查 {file_path} 的 API 设计。
 
 审查维度：
 1. **RESTful 规范** — 资源命名、HTTP 方法语义、状态码使用是否正确
@@ -945,6 +1072,19 @@ def api_design_review(file_path: str) -> str:
 7. **文档完整性** — 参数说明、示例、错误码列表是否完备
 
 给出具体的改进建议和示例，参考 OpenAPI 3.0 规范。"""
+    else:
+        return f"""Please review the API design in {file_path}.
+
+Review dimensions:
+1. **RESTful conventions** — Correct resource naming, HTTP method semantics, status codes?
+2. **Interface consistency** — Unified naming style, parameter format, response structure?
+3. **Versioning strategy** — Is versioning in place? How is backward compatibility guaranteed?
+4. **Error handling** — Do error responses contain enough info? Are error codes standardized?
+5. **Security design** — Authentication method, permission granularity, sensitive field filtering?
+6. **Performance design** — Support for pagination, filtering, field selection (GraphQL-style)?
+7. **Documentation completeness** — Parameter descriptions, examples, error code list?
+
+Provide specific improvement suggestions and examples, referencing the OpenAPI 3.0 specification."""
 
 
 if __name__ == "__main__":
