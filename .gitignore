@@ -25,3 +25,5 @@ Thumbs.db
 .cursor/memory.md
 .cursor/team-memory/
 .cursor/crons.json
+.cursor
+.docs/TOUTIAO-ANALYSIS.md
