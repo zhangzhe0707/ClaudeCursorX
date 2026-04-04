@@ -10,6 +10,9 @@ Dev Utils MCP Server — 开发辅助工具集。
 6. cron_manager       — 简易定时任务管理
 7. prompt_suggestion  — 任务完成后建议后续步骤
 8. lsp_diagnostics    — 增强版 LSP 诊断（包装编译器/类型检查器输出）
+9. security_scan      — 安全风险扫描（移植自 Claude Code security-guidance）
+10. hookify_evaluate  — 规则引擎评估（适配自 Claude Code hookify 插件）
+11. hookify_validate_rules — 规则验证
 """
 
 from __future__ import annotations
@@ -927,6 +930,184 @@ def security_scan(file_path: str, content: str = "", language: str = "zh") -> st
         "summary": summary,
         "findings": findings,
     }, ensure_ascii=False, indent=2)
+
+
+# ─── hookify 规则引擎（适配自 Claude Code hookify 插件） ─────────────────────
+
+@mcp.tool()
+def hookify_evaluate(
+    rules_json: str,
+    event: str,
+    tool_name: str = "",
+    tool_input_json: str = "{}",
+    language: str = "zh",
+) -> str:
+    """Evaluate hookify rules against an event. / 根据 hookify 规则评估事件。
+
+    Adapted from Claude Code hookify plugin's rule engine. Supports rule-based
+    blocking/warning on tool use, user prompt, stop events, etc.
+
+    Args:
+        rules_json: JSON array of rules. Each rule: {"name": str, "enabled": bool,
+                    "event": str (PreToolUse|PostToolUse|Stop|UserPromptSubmit),
+                    "tool_matcher": str ("Bash"|"Edit|Write"|"*"),
+                    "action": "block"|"warn",
+                    "conditions": [{"field": str, "operator": str, "pattern": str}],
+                    "message": str}
+        event: Hook event name (PreToolUse, PostToolUse, Stop, UserPromptSubmit)
+        tool_name: Name of the tool being used (empty for Stop/UserPromptSubmit)
+        tool_input_json: JSON string of tool input parameters
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    try:
+        rules = json.loads(rules_json)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid rules JSON: {e}"}, ensure_ascii=False)
+
+    try:
+        tool_input = json.loads(tool_input_json) if tool_input_json else {}
+    except json.JSONDecodeError:
+        tool_input = {}
+
+    blocking = []
+    warnings = []
+
+    for rule in rules:
+        if not rule.get("enabled", True):
+            continue
+
+        if rule.get("event") and rule["event"] != event:
+            continue
+
+        matcher = rule.get("tool_matcher", "*")
+        if matcher != "*" and tool_name not in matcher.split("|"):
+            continue
+
+        conditions = rule.get("conditions", [])
+        if not conditions:
+            continue
+
+        all_match = True
+        for cond in conditions:
+            field = cond.get("field", "")
+            operator = cond.get("operator", "contains")
+            pattern = cond.get("pattern", "")
+
+            value = tool_input.get(field, "")
+            if isinstance(value, dict):
+                value = json.dumps(value, ensure_ascii=False)
+            elif not isinstance(value, str):
+                value = str(value)
+
+            if operator == "regex_match":
+                try:
+                    if not re.search(pattern, value, re.IGNORECASE):
+                        all_match = False
+                        break
+                except re.error:
+                    all_match = False
+                    break
+            elif operator == "contains":
+                if pattern not in value:
+                    all_match = False
+                    break
+            elif operator == "equals":
+                if pattern != value:
+                    all_match = False
+                    break
+            elif operator == "not_contains":
+                if pattern in value:
+                    all_match = False
+                    break
+            elif operator == "starts_with":
+                if not value.startswith(pattern):
+                    all_match = False
+                    break
+            elif operator == "ends_with":
+                if not value.endswith(pattern):
+                    all_match = False
+                    break
+            else:
+                all_match = False
+                break
+
+        if all_match:
+            entry = {"rule": rule.get("name", "unnamed"), "message": rule.get("message", "")}
+            if rule.get("action") == "block":
+                blocking.append(entry)
+            else:
+                warnings.append(entry)
+
+    if blocking:
+        label = "操作被阻止" if is_zh else "Operation blocked"
+        return json.dumps({
+            "decision": "block",
+            "label": label,
+            "matched_rules": blocking,
+            "warning_rules": warnings,
+        }, ensure_ascii=False, indent=2)
+
+    if warnings:
+        label = "操作允许但有警告" if is_zh else "Operation allowed with warnings"
+        return json.dumps({
+            "decision": "allow",
+            "label": label,
+            "warning_rules": warnings,
+        }, ensure_ascii=False, indent=2)
+
+    label = "无匹配规则，操作允许" if is_zh else "No rules matched, operation allowed"
+    return json.dumps({"decision": "allow", "label": label}, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def hookify_validate_rules(rules_json: str, language: str = "zh") -> str:
+    """Validate hookify rules for correctness. / 验证 hookify 规则的正确性。
+
+    Args:
+        rules_json: JSON array of rules to validate
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    try:
+        rules = json.loads(rules_json)
+    except json.JSONDecodeError as e:
+        return json.dumps({"valid": False, "error": str(e)}, ensure_ascii=False)
+
+    if not isinstance(rules, list):
+        msg = "rules_json 必须是 JSON 数组" if is_zh else "rules_json must be a JSON array"
+        return json.dumps({"valid": False, "error": msg}, ensure_ascii=False)
+
+    issues: list[dict] = []
+    valid_events = {"PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit", "SessionStart", "SessionEnd"}
+    valid_operators = {"regex_match", "contains", "equals", "not_contains", "starts_with", "ends_with"}
+
+    for i, rule in enumerate(rules):
+        prefix = f"rules[{i}]"
+        if not isinstance(rule, dict):
+            issues.append({"rule": i, "issue": "must be an object" if not is_zh else "必须是对象"})
+            continue
+        if not rule.get("name"):
+            issues.append({"rule": i, "issue": "missing name" if not is_zh else "缺少 name"})
+        evt = rule.get("event", "")
+        if evt and evt not in valid_events:
+            issues.append({"rule": i, "issue": f"unknown event '{evt}', valid: {valid_events}"})
+        for j, cond in enumerate(rule.get("conditions", [])):
+            op = cond.get("operator", "")
+            if op and op not in valid_operators:
+                issues.append({"rule": i, "condition": j, "issue": f"unknown operator '{op}'"})
+            if cond.get("operator") == "regex_match":
+                try:
+                    re.compile(cond.get("pattern", ""))
+                except re.error as e:
+                    issues.append({"rule": i, "condition": j, "issue": f"invalid regex: {e}"})
+
+    if issues:
+        return json.dumps({"valid": False, "issues": issues}, ensure_ascii=False, indent=2)
+    msg = f"全部 {len(rules)} 条规则验证通过" if is_zh else f"All {len(rules)} rules are valid"
+    return json.dumps({"valid": True, "message": msg, "rule_count": len(rules)}, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
