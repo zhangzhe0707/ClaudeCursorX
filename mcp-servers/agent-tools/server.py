@@ -459,7 +459,7 @@ def permission_check(
 
 import time as _time
 
-_METRICS_DIR = _Path(os.environ.get("METRICS_DIR", _Path.home() / ".cursor" / "metrics"))
+_METRICS_DIR = Path(os.environ.get("METRICS_DIR", Path.home() / ".cursor" / "metrics"))
 _METRICS_FILE = _METRICS_DIR / "metrics.json"
 _METRICS_START = _time.time()
 
