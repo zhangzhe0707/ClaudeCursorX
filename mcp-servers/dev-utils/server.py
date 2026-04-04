@@ -13,6 +13,12 @@ Dev Utils MCP Server — 开发辅助工具集。
 9. security_scan      — 安全风险扫描（移植自 Claude Code security-guidance）
 10. hookify_evaluate  — 规则引擎评估（适配自 Claude Code hookify 插件）
 11. hookify_validate_rules — 规则验证
+12. audit_log         — 审计日志记录（借鉴 claude-code-rust AuditLogger）
+13. audit_query       — 审计日志查询
+14. sandbox_check     — 沙箱命令安全检查（借鉴 claude-code-rust SandboxManager）
+15. context_compress  — 上下文压缩（借鉴 claude-code-rust ContextCompressor）
+16. feature_flags     — 特性开关管理（借鉴 claude-code-rust FeatureManager）
+17. editor_detect     — 编辑器兼容检测（借鉴 claude-code-rust EditorIntegrationManager）
 """
 
 from __future__ import annotations
@@ -1108,6 +1114,333 @@ def hookify_validate_rules(rules_json: str, language: str = "zh") -> str:
         return json.dumps({"valid": False, "issues": issues}, ensure_ascii=False, indent=2)
     msg = f"全部 {len(rules)} 条规则验证通过" if is_zh else f"All {len(rules)} rules are valid"
     return json.dumps({"valid": True, "message": msg, "rule_count": len(rules)}, ensure_ascii=False, indent=2)
+
+
+# ─── 审计日志系统（借鉴 claude-code-rust security/audit） ─────────────────────
+
+import time as _time
+from collections import deque as _deque
+
+_AUDIT_LOG: _deque = _deque(maxlen=1000)
+
+AUDIT_EVENT_TYPES = [
+    "tool_call", "permission_decision", "file_operation",
+    "network_request", "dangerous_command", "sandbox_execution",
+    "authentication", "system_event",
+]
+
+
+@mcp.tool()
+def audit_log(
+    event_type: str,
+    details: str = "{}",
+    level: str = "info",
+    user_id: str = "default",
+    language: str = "zh",
+) -> str:
+    """Log an audit event. / 记录审计事件。
+
+    Adapted from claude-code-rust's AuditLogger with 8 event types.
+
+    Args:
+        event_type: One of tool_call/permission_decision/file_operation/network_request/
+                    dangerous_command/sandbox_execution/authentication/system_event
+        details: JSON string with event-specific details
+        level: debug/info/warning/error/critical
+        user_id: User identifier
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    if event_type not in AUDIT_EVENT_TYPES:
+        event_type = "system_event"
+
+    try:
+        detail_obj = json.loads(details) if details else {}
+    except json.JSONDecodeError:
+        detail_obj = {"raw": details}
+
+    import hashlib
+    event = {
+        "id": hashlib.md5(f"{event_type}{_time.time()}".encode()).hexdigest()[:12],
+        "timestamp": _time.time(),
+        "level": level,
+        "event_type": event_type,
+        "user_id": user_id,
+        "details": detail_obj,
+    }
+    _AUDIT_LOG.append(event)
+
+    msg = f"审计事件已记录 ({event_type})" if is_zh else f"Audit event logged ({event_type})"
+    return json.dumps({"status": "ok", "message": msg, "event_id": event["id"],
+                        "total_events": len(_AUDIT_LOG)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def audit_query(
+    event_type: str = "",
+    level: str = "",
+    limit: int = 50,
+    language: str = "zh",
+) -> str:
+    """Query audit log events. / 查询审计日志。
+
+    Args:
+        event_type: Filter by event type (empty = all)
+        level: Filter by level (empty = all)
+        limit: Max events to return
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    results = list(_AUDIT_LOG)
+    if event_type:
+        results = [e for e in results if e["event_type"] == event_type]
+    if level:
+        results = [e for e in results if e["level"] == level]
+
+    results = results[-limit:]
+    title = f"审计日志（{len(results)} 条）" if is_zh else f"Audit log ({len(results)} events)"
+    return json.dumps({"title": title, "count": len(results), "events": results},
+                       ensure_ascii=False, indent=2)
+
+
+# ─── 沙箱命令检查（借鉴 claude-code-rust security/sandbox） ──────────────────
+
+DANGEROUS_COMMANDS = {
+    "critical": ["rm -rf /", "mkfs", "dd if=", "> /dev/sd", ":(){ :|:& };:"],
+    "high": ["chmod -R 777", "chown -R", "kill -9", "pkill", "shutdown", "reboot",
+             "systemctl stop", "iptables -F"],
+    "medium": ["curl | bash", "wget | sh", "eval", "exec", "sudo"],
+}
+
+SAFE_COMMANDS = [
+    "ls", "cat", "head", "tail", "grep", "find", "echo", "pwd", "cd", "mkdir",
+    "cp", "mv", "touch", "date", "whoami", "uname", "env", "which", "wc",
+    "sort", "uniq", "diff", "git status", "git log", "git diff", "git branch",
+    "npm list", "pip list", "cargo check", "python --version", "node --version",
+]
+
+
+@mcp.tool()
+def sandbox_check(
+    command: str,
+    language: str = "zh",
+) -> str:
+    """Check if a command is safe to execute. / 检查命令是否安全可执行。
+
+    Adapted from claude-code-rust's SandboxManager + CommandChecker.
+
+    Args:
+        command: Shell command to check
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    cmd_lower = command.lower().strip()
+    first_token = cmd_lower.split()[0] if cmd_lower else ""
+
+    for safe in SAFE_COMMANDS:
+        if cmd_lower.startswith(safe):
+            label = "安全" if is_zh else "Safe"
+            return json.dumps({"danger_level": "safe", "label": label,
+                                "requires_sandbox": False, "command": command},
+                               ensure_ascii=False)
+
+    for level in ["critical", "high", "medium"]:
+        for pattern in DANGEROUS_COMMANDS.get(level, []):
+            if pattern.lower() in cmd_lower:
+                label = {"critical": "严重危险" if is_zh else "Critical",
+                         "high": "高风险" if is_zh else "High risk",
+                         "medium": "中风险" if is_zh else "Medium risk"}[level]
+                return json.dumps({
+                    "danger_level": level,
+                    "label": label,
+                    "requires_sandbox": True,
+                    "matched_pattern": pattern,
+                    "command": command,
+                }, ensure_ascii=False, indent=2)
+
+    label = "低风险" if is_zh else "Low risk"
+    return json.dumps({"danger_level": "low", "label": label,
+                        "requires_sandbox": False, "command": command},
+                       ensure_ascii=False)
+
+
+# ─── 上下文压缩器（借鉴 claude-code-rust query/compressor） ─────────────────
+
+@mcp.tool()
+def context_compress(
+    messages_json: str,
+    max_tokens: int = 100000,
+    keep_recent: int = 5,
+    language: str = "zh",
+) -> str:
+    """Compress conversation context to fit token budget. / 压缩对话上下文以适应 token 预算。
+
+    Adapted from claude-code-rust's ContextCompressor + QueryPipeline.
+
+    Args:
+        messages_json: JSON array of messages [{"role": "...", "content": "..."}]
+        max_tokens: Maximum token budget
+        keep_recent: Number of recent messages to always keep
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    try:
+        messages = json.loads(messages_json)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    if not isinstance(messages, list):
+        return json.dumps({"error": "messages must be a JSON array"}, ensure_ascii=False)
+
+    def estimate_tokens(text: str) -> int:
+        ascii_chars = sum(1 for c in text if ord(c) < 128)
+        non_ascii = len(text) - ascii_chars
+        return ascii_chars // 4 + non_ascii // 2
+
+    total = sum(estimate_tokens(m.get("content", "")) for m in messages)
+    if total <= max_tokens:
+        msg = "无需压缩" if is_zh else "No compression needed"
+        return json.dumps({"status": "ok", "message": msg,
+                            "original_tokens": total, "compressed_tokens": total,
+                            "messages": messages}, ensure_ascii=False, indent=2)
+
+    # 保留最近 keep_recent 条 + 第一条（系统提示）
+    if len(messages) <= keep_recent + 1:
+        msg = "消息太少无法压缩" if is_zh else "Too few messages to compress"
+        return json.dumps({"status": "ok", "message": msg, "messages": messages},
+                           ensure_ascii=False, indent=2)
+
+    kept = [messages[0]] + messages[-keep_recent:]
+    new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
+
+    # 如果仍超预算，截断最长消息的 content
+    if new_total > max_tokens:
+        for m in kept[1:]:
+            content = m.get("content", "")
+            tokens = estimate_tokens(content)
+            if tokens > max_tokens // keep_recent:
+                ratio = (max_tokens // keep_recent) / tokens
+                m["content"] = content[:int(len(content) * ratio)] + "\n... [truncated]"
+        new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
+
+    msg = (f"压缩完成：{total} → {new_total} tokens" if is_zh
+           else f"Compressed: {total} → {new_total} tokens")
+    return json.dumps({
+        "status": "ok",
+        "message": msg,
+        "original_tokens": total,
+        "compressed_tokens": new_total,
+        "original_count": len(messages),
+        "compressed_count": len(kept),
+        "messages": kept,
+    }, ensure_ascii=False, indent=2)
+
+
+# ─── 特性开关管理（借鉴 claude-code-rust features/FeatureManager） ───────────
+
+DEFAULT_FEATURES = {
+    "proactive": {"enabled": False, "experimental": True, "description": "主动建议功能"},
+    "voice": {"enabled": False, "experimental": True, "description": "语音输入功能"},
+    "coordinator": {"enabled": True, "experimental": False, "description": "多 Agent 协调器"},
+    "security_scan": {"enabled": True, "experimental": False, "description": "安全扫描"},
+    "hookify": {"enabled": True, "experimental": False, "description": "规则引擎"},
+    "memory": {"enabled": True, "experimental": False, "description": "记忆系统"},
+    "metrics": {"enabled": True, "experimental": False, "description": "性能指标收集"},
+    "audit": {"enabled": True, "experimental": False, "description": "审计日志"},
+    "i18n": {"enabled": True, "experimental": False, "description": "国际化支持"},
+    "sandbox": {"enabled": True, "experimental": False, "description": "沙箱命令检查"},
+}
+
+
+@mcp.tool()
+def feature_flags(
+    action: str = "list",
+    feature: str = "",
+    language: str = "zh",
+) -> str:
+    """Manage feature flags. / 管理特性开关。
+
+    Adapted from claude-code-rust's FeatureManager.
+
+    Args:
+        action: "list" / "enable" / "disable" / "toggle" / "reset"
+        feature: Feature name (required for enable/disable/toggle)
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    if action == "list":
+        return json.dumps({"features": DEFAULT_FEATURES}, ensure_ascii=False, indent=2)
+
+    if not feature or feature not in DEFAULT_FEATURES:
+        names = list(DEFAULT_FEATURES.keys())
+        msg = f"未知特性 '{feature}'，可选: {names}" if is_zh else f"Unknown feature '{feature}', available: {names}"
+        return json.dumps({"error": msg}, ensure_ascii=False)
+
+    f = DEFAULT_FEATURES[feature]
+    if action == "enable":
+        f["enabled"] = True
+    elif action == "disable":
+        f["enabled"] = False
+    elif action == "toggle":
+        f["enabled"] = not f["enabled"]
+    elif action == "reset":
+        pass  # 保持当前值
+    else:
+        msg = "未知操作" if is_zh else "Unknown action"
+        return json.dumps({"error": msg}, ensure_ascii=False)
+
+    state = "启用" if f["enabled"] else "禁用"
+    state_en = "enabled" if f["enabled"] else "disabled"
+    msg = f"{feature} 已{state}" if is_zh else f"{feature} {state_en}"
+    return json.dumps({"status": "ok", "message": msg,
+                        "feature": feature, "enabled": f["enabled"]}, ensure_ascii=False)
+
+
+# ─── 编辑器兼容检测（借鉴 claude-code-rust editor_compat） ───────────────────
+
+@mcp.tool()
+def editor_detect(language: str = "zh") -> str:
+    """Detect current editor environment and capabilities. / 检测当前编辑器环境和能力。
+
+    Adapted from claude-code-rust's EditorIntegrationManager.
+
+    Args:
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    env = os.environ
+    editor_info: dict = {"type": "unknown", "features": []}
+
+    # Cursor / VSCode 检测
+    if env.get("CURSOR_CHANNEL") or "cursor" in env.get("TERM_PROGRAM", "").lower():
+        editor_info["type"] = "cursor"
+        editor_info["features"] = ["mcp", "inline_chat", "composer", "agent_mode",
+                                    "rules", "skills", "subagents"]
+    elif env.get("VSCODE_PID") or env.get("TERM_PROGRAM") == "vscode":
+        editor_info["type"] = "vscode"
+        editor_info["features"] = ["extensions", "tasks", "terminal", "debug"]
+    elif env.get("JETBRAINS_IDE"):
+        editor_info["type"] = "jetbrains"
+        editor_info["features"] = ["inspections", "refactoring", "vcs"]
+    elif env.get("VIM") or env.get("NVIM"):
+        editor_info["type"] = "vim/neovim"
+        editor_info["features"] = ["lsp", "treesitter"]
+    elif env.get("INSIDE_EMACS"):
+        editor_info["type"] = "emacs"
+        editor_info["features"] = ["lsp", "treemacs"]
+
+    editor_info["shell"] = env.get("SHELL", "unknown")
+    editor_info["term"] = env.get("TERM", "unknown")
+    editor_info["cwd"] = os.getcwd()
+
+    title = "编辑器检测结果" if is_zh else "Editor Detection Result"
+    return json.dumps({"title": title, **editor_info}, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":

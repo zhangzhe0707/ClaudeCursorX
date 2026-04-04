@@ -1,0 +1,55 @@
+---
+description: "Safety hook system — auto-check dangerous operations before execution (adapted from claude-code-rust HookPoint model)"
+globs: "**/*"
+alwaysApply: true
+---
+
+# Safety Hooks — 安全拦截系统
+
+> 借鉴 claude-code-rust 的 HookPoint 事件模型（PreToolExecution / PostToolExecution 等 20+ 事件点）
+> 和 hookify 插件的规则引擎，在 Cursor 中通过 Rule 实现"软拦截"
+
+## Pre-Tool Execution Checks
+
+Before executing any of the following operations, you MUST call the corresponding check tool:
+
+### Shell Commands (PreToolExecution → Shell)
+Before running any shell command via the Shell tool:
+1. Call `sandbox_check` with the command to assess danger level
+2. If danger_level is "critical" or "high": **STOP and warn the user**, do not execute
+3. If danger_level is "medium": ask the user for explicit confirmation
+4. Log the decision via `audit_log` with event_type "dangerous_command"
+
+### File Modifications (PreToolExecution → Write/StrReplace)
+Before modifying files matching sensitive patterns:
+- `.env*`, `*credentials*`, `*secret*`, `*.key`, `*.pem` → STOP and warn
+- `*.lock`, `package-lock.json`, `yarn.lock` → warn but allow with confirmation
+- Log via `audit_log` with event_type "file_operation"
+
+### Git Operations (PreToolExecution → Git)
+Before executing destructive git operations:
+- `git push --force`, `git reset --hard`, `git clean -fd` → STOP and warn
+- `git rebase` on main/master → require explicit confirmation
+- Log via `audit_log` with event_type "tool_call"
+
+## Post-Tool Execution Checks
+
+After completing significant operations:
+1. Call `metrics_record` to log the tool execution time
+2. For file changes: verify with `ReadLints` that no new errors were introduced
+
+## Permission Check Flow
+
+```
+User Request → Parse Tool + Input
+  → permission_check(tool_name, tool_input)
+    → "allow" → proceed
+    → "deny"  → stop, explain why
+    → "ask"   → present risk to user, wait for confirmation
+```
+
+## Important
+
+- These checks are defensive, not blocking — you should always explain WHY something is risky
+- False positives are better than missed risks
+- Always log decisions for audit trail

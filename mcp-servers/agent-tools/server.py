@@ -2,11 +2,16 @@
 Agent Tools MCP Server — 为 Cursor 提供 Claude Code 风格的增强工具。
 
 突破 Cursor 内置工具的限制，提供：
-1. token_count   — 估算文件/文本的 token 数量
-2. context_budget — 追踪当前会话的上下文使用情况
-3. project_map   — 一次性生成项目结构摘要
+1. token_count      — 估算文件/文本的 token 数量
+2. context_budget   — 追踪当前会话的上下文使用情况
+3. project_map      — 一次性生成项目结构摘要
 4. dependency_graph — 分析模块间的 import 依赖关系
-5. test_runner   — 智能测试运行器（自动检测框架并运行相关测试）
+5. permission_check — 工具权限检查（借鉴 claude-code-rust 双层权限模型）
+6. metrics_record   — 性能指标记录（借鉴 claude-code-rust MetricsCollector）
+7. metrics_report   — 性能报告生成
+8. memory_save      — 跨会话记忆保存（借鉴 claude-code-rust MemoryManager）
+9. memory_search    — 记忆搜索
+10. memory_consolidate — 记忆整合（Jaccard 相似度去重）
 
 启动方式：
   pip install mcp fastmcp tiktoken
@@ -378,6 +383,310 @@ def _find_test_file(source_path: str, proj: Path) -> str:
         if full.exists():
             return str(candidate)
     return ""
+
+
+# ─── 工具权限系统（借鉴 claude-code-rust Tool trait 权限模型） ────────────────
+
+TOOL_PERMISSION_RULES: dict = {
+    "always_allow": [],
+    "always_deny": [],
+    "always_ask": [],
+}
+
+DANGEROUS_PATTERNS = [
+    r"rm\s+-rf\s+/",
+    r"mkfs\.",
+    r"dd\s+if=",
+    r">\s*/dev/sd",
+    r"chmod\s+-R\s+777",
+    r"curl\s+.*\|\s*(bash|sh)",
+    r"wget\s+.*\|\s*(bash|sh)",
+]
+
+
+@mcp.tool()
+def permission_check(
+    tool_name: str,
+    tool_input: str = "",
+    mode: str = "default",
+    language: str = "zh",
+) -> str:
+    """Check tool permission before execution. / 执行工具前检查权限。
+
+    Adapted from claude-code-rust's dual-layer permission model
+    (tools::permissions + security::permissions).
+
+    Args:
+        tool_name: Name of the tool to check
+        tool_input: Input content to check (e.g. shell command)
+        mode: Permission mode — "default", "bypass", "plan"
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    for rule in TOOL_PERMISSION_RULES.get("always_allow", []):
+        if re.match(rule, tool_name):
+            label = "允许（always_allow 规则）" if is_zh else "Allowed (always_allow rule)"
+            return json.dumps({"decision": "allow", "reason": label}, ensure_ascii=False)
+
+    for rule in TOOL_PERMISSION_RULES.get("always_deny", []):
+        if re.match(rule, tool_name):
+            label = "拒绝（always_deny 规则）" if is_zh else "Denied (always_deny rule)"
+            return json.dumps({"decision": "deny", "reason": label}, ensure_ascii=False)
+
+    danger_hits = []
+    for pat in DANGEROUS_PATTERNS:
+        if re.search(pat, tool_input, re.IGNORECASE):
+            danger_hits.append(pat)
+
+    if danger_hits:
+        label = "需要确认（检测到危险模式）" if is_zh else "Requires approval (dangerous pattern detected)"
+        return json.dumps({
+            "decision": "ask",
+            "reason": label,
+            "matched_patterns": danger_hits,
+        }, ensure_ascii=False, indent=2)
+
+    if mode == "bypass":
+        label = "允许（bypass 模式）" if is_zh else "Allowed (bypass mode)"
+        return json.dumps({"decision": "allow", "reason": label}, ensure_ascii=False)
+
+    label = "允许" if is_zh else "Allowed"
+    return json.dumps({"decision": "allow", "reason": label}, ensure_ascii=False)
+
+
+# ─── 性能指标收集（借鉴 claude-code-rust performance/metrics） ────────────────
+
+import time as _time
+
+_METRICS: dict = {
+    "counters": {},
+    "snapshots": [],
+    "start_time": _time.time(),
+}
+
+
+@mcp.tool()
+def metrics_record(
+    event: str,
+    value: float = 1.0,
+    attributes: str = "{}",
+    language: str = "zh",
+) -> str:
+    """Record a performance metric. / 记录性能指标。
+
+    Adapted from claude-code-rust's MetricsCollector + PerformanceMonitor.
+
+    Args:
+        event: Metric event name (e.g. "tool_call", "api_latency_ms", "token_usage")
+        value: Metric value (default 1.0 for counters)
+        attributes: JSON string of key-value attributes
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    try:
+        attrs = json.loads(attributes) if attributes else {}
+    except json.JSONDecodeError:
+        attrs = {}
+
+    counters = _METRICS["counters"]
+    if event not in counters:
+        counters[event] = {"total": 0.0, "count": 0, "history": []}
+
+    counters[event]["total"] += value
+    counters[event]["count"] += 1
+    counters[event]["history"].append({
+        "value": value,
+        "time": _time.time(),
+        "attributes": attrs,
+    })
+    # 保留最近 200 条
+    if len(counters[event]["history"]) > 200:
+        counters[event]["history"] = counters[event]["history"][-200:]
+
+    msg = f"已记录 {event}={value}" if is_zh else f"Recorded {event}={value}"
+    return json.dumps({"status": "ok", "message": msg, "event": event,
+                        "total": counters[event]["total"],
+                        "count": counters[event]["count"]}, ensure_ascii=False)
+
+
+@mcp.tool()
+def metrics_report(language: str = "zh") -> str:
+    """Generate a performance report. / 生成性能报告。
+
+    Args:
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+    uptime = _time.time() - _METRICS["start_time"]
+
+    report = {}
+    for name, data in _METRICS["counters"].items():
+        avg = data["total"] / data["count"] if data["count"] > 0 else 0
+        report[name] = {
+            "total": data["total"],
+            "count": data["count"],
+            "average": round(avg, 3),
+        }
+
+    title = "性能报告" if is_zh else "Performance Report"
+    return json.dumps({
+        "title": title,
+        "uptime_seconds": round(uptime, 1),
+        "metrics": report,
+    }, ensure_ascii=False, indent=2)
+
+
+# ─── 记忆管理系统（借鉴 claude-code-rust memory 模块） ────────────────────────
+
+import hashlib as _hashlib
+from collections import OrderedDict as _OrderedDict
+
+_MEMORY_STORE: dict = {
+    "entries": _OrderedDict(),
+    "max_entries": 500,
+}
+
+MEMORY_TYPES = ["session", "conversation", "knowledge", "preference", "task", "error", "insight"]
+
+
+@mcp.tool()
+def memory_save(
+    content: str,
+    memory_type: str = "knowledge",
+    importance: float = 0.5,
+    tags: str = "",
+    language: str = "zh",
+) -> str:
+    """Save a memory entry for cross-session recall. / 保存记忆条目以供跨会话召回。
+
+    Adapted from claude-code-rust's MemoryManager + ConsolidationEngine.
+
+    Args:
+        content: Memory content
+        memory_type: Type — session/conversation/knowledge/preference/task/error/insight
+        importance: 0.0-1.0, higher = more important
+        tags: Comma-separated tags
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    if memory_type not in MEMORY_TYPES:
+        memory_type = "knowledge"
+
+    entry_id = _hashlib.md5(f"{content}{_time.time()}".encode()).hexdigest()[:12]
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    entry = {
+        "id": entry_id,
+        "type": memory_type,
+        "content": content,
+        "importance": max(0.0, min(1.0, importance)),
+        "tags": tag_list,
+        "timestamp": _time.time(),
+    }
+
+    store = _MEMORY_STORE["entries"]
+    store[entry_id] = entry
+
+    # 超出上限时按 importance 最低淘汰（借鉴 consolidation 策略）
+    while len(store) > _MEMORY_STORE["max_entries"]:
+        min_key = min(store, key=lambda k: store[k]["importance"])
+        del store[min_key]
+
+    msg = f"记忆已保存 (id={entry_id})" if is_zh else f"Memory saved (id={entry_id})"
+    return json.dumps({"status": "ok", "message": msg, "id": entry_id,
+                        "total_memories": len(store)}, ensure_ascii=False)
+
+
+@mcp.tool()
+def memory_search(
+    query: str = "",
+    memory_type: str = "",
+    tags: str = "",
+    min_importance: float = 0.0,
+    limit: int = 20,
+    language: str = "zh",
+) -> str:
+    """Search stored memories. / 搜索已存储的记忆。
+
+    Args:
+        query: Text substring to search for
+        memory_type: Filter by type (empty = all)
+        tags: Comma-separated tags to filter
+        min_importance: Minimum importance threshold
+        limit: Max results to return
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+    tag_filter = {t.strip() for t in tags.split(",") if t.strip()} if tags else set()
+
+    results = []
+    for entry in _MEMORY_STORE["entries"].values():
+        if memory_type and entry["type"] != memory_type:
+            continue
+        if entry["importance"] < min_importance:
+            continue
+        if query and query.lower() not in entry["content"].lower():
+            continue
+        if tag_filter and not tag_filter.intersection(entry.get("tags", [])):
+            continue
+        results.append(entry)
+
+    results.sort(key=lambda e: e["importance"], reverse=True)
+    results = results[:limit]
+
+    title = f"找到 {len(results)} 条记忆" if is_zh else f"Found {len(results)} memories"
+    return json.dumps({"title": title, "count": len(results), "results": results},
+                       ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+def memory_consolidate(language: str = "zh") -> str:
+    """Consolidate memories: remove low-value duplicates. / 整合记忆：删除低价值重复项。
+
+    Adapted from claude-code-rust's ConsolidationEngine (Jaccard similarity + importance).
+
+    Args:
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+
+    store = _MEMORY_STORE["entries"]
+    before = len(store)
+    if before == 0:
+        msg = "无记忆可整合" if is_zh else "No memories to consolidate"
+        return json.dumps({"status": "ok", "message": msg}, ensure_ascii=False)
+
+    entries = list(store.values())
+    to_remove = set()
+
+    for i, a in enumerate(entries):
+        if a["id"] in to_remove:
+            continue
+        words_a = set(a["content"].lower().split())
+        for j in range(i + 1, len(entries)):
+            b = entries[j]
+            if b["id"] in to_remove or a["type"] != b["type"]:
+                continue
+            words_b = set(b["content"].lower().split())
+            inter = len(words_a & words_b)
+            union = len(words_a | words_b)
+            similarity = inter / union if union > 0 else 0
+            if similarity > 0.7:
+                victim = a["id"] if a["importance"] <= b["importance"] else b["id"]
+                to_remove.add(victim)
+
+    for rid in to_remove:
+        store.pop(rid, None)
+
+    after = len(store)
+    msg = (f"整合完成：{before} → {after}（移除 {before - after} 条重复）" if is_zh
+           else f"Consolidation done: {before} → {after} (removed {before - after} duplicates)")
+    return json.dumps({"status": "ok", "message": msg,
+                        "before": before, "after": after,
+                        "removed": before - after}, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":
