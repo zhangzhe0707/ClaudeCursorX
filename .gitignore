@@ -28,3 +28,5 @@ Thumbs.db
 .cursor
 # Local-only directories (not synced to remote)
 claude-code/
+claude-code-rust/
+claude-code-skills/

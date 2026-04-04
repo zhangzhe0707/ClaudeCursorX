@@ -58,21 +58,26 @@ graph TB
 
 ## 功能清单
 
-### MCP Servers (34 个工具)
+### MCP Servers（5 个服务器，50 个工具，11 个 Prompts）
 
 | Server | 工具 | 功能 |
 |--------|------|------|
 | **agent-tools** | `token_count` | 估算文本 token 数量 |
 | | `project_map` | 生成项目结构地图 |
 | | `dependency_graph` | 分析模块依赖关系 |
-| | `test_runner` | 运行测试用例 |
+| | `permission_check` | 🔒 双层权限检查（Allow/Deny/Ask） |
+| | `metrics_record` | 📊 性能指标记录（文件持久化） |
+| | `metrics_report` | 📊 性能报告生成 |
+| | `memory_save` | 🧠 记忆保存（文件持久化，跨会话不丢失） |
+| | `memory_search` | 🧠 记忆搜索（类型/标签/重要度） |
+| | `memory_consolidate` | 🧠 记忆整合（Jaccard 相似度去重） |
 | **code-intel** | `analyze_impact` | 分析代码变更影响范围 |
 | | `module_summary` | 生成模块摘要 |
 | | `find_test_coverage` | 查找测试覆盖情况 |
 | | `symbol_references` | 查找符号引用 |
 | | `dependency_graph` | 依赖关系分析 |
 | | `project_overview` | 项目概览 |
-| | `memory_save` | 保存决策记忆到持久化文件 |
+| | `memory_save` | 保存决策记忆到 `.cursor/memory.md` |
 | | `memory_search` | 搜索历史记忆 |
 | | `memory_read` | 读取所有记忆 |
 | | `team_memory_sync` | 团队记忆 Git 同步 |
@@ -96,17 +101,36 @@ graph TB
 | | `cron_manager` | 简易定时任务 |
 | | `lsp_diagnostics` | LSP 深度诊断 |
 | | `prompt_suggestion` | 智能后续步骤建议 |
+| | `security_scan` | 🔒 安全风险扫描（8 种规则） |
+| | `hookify_evaluate` | ⚡ Hook 规则引擎评估 |
+| | `hookify_validate_rules` | ⚡ Hook 规则验证 |
+| | `audit_log` | 📋 审计日志记录（8 种事件类型） |
+| | `audit_query` | 📋 审计日志查询 |
+| | `sandbox_check` | 🔒 沙箱命令安全检查 |
+| | `context_compress` | 📦 智能上下文压缩（importance 感知） |
+| | `feature_flags` | 🎛️ 特性开关管理 |
+| | `editor_detect` | 🖥️ 编辑器兼容检测 |
+| | `plugin_registry` | 📦 插件注册表扫描与验证 |
 
-### Skills (4 套)
+**MCP Prompts（11 个）**：`code_review` · `bug_analysis` · `refactor_plan` · `security_audit` · `explain_code` · `write_tests` · `performance_review` · `api_design_review` · `quick_commit` · `commit_push_pr` · `clean_gone_branches`
 
-| Skill | 描述 | 文件 |
-|-------|------|------|
-| **agent-loop-orchestrator** | 核心 Agent 循环逻辑，包含 10 种高级模式（深度审查、子 Agent 协调、会话引导等） | `SKILL.md` + `patterns.md` |
-| **tool-strategy** | 工具选择策略和高级编排模式（并行搜索、大文件处理、上下文复用） | `SKILL.md` + `advanced-patterns.md` |
-| **context-management** | 上下文 token 预算管理，大型代码库高效导航策略 | `SKILL.md` + `large-codebase-guide.md` |
-| **quality-gate** | 质量把关流程，包含 TypeScript/Python/Rust 等多语言检查清单 | `SKILL.md` + `checklists.md` |
+### Skills（11 套）
 
-### Rules (4 条)
+| Skill | 描述 |
+|-------|------|
+| **agent-loop-orchestrator** | 核心 Agent 循环逻辑，包含 10 种高级模式 |
+| **tool-strategy** | 工具选择策略和高级编排模式 |
+| **context-management** | 上下文 token 预算管理策略 |
+| **quality-gate** | 质量把关流程，多语言检查清单 |
+| **code-review** | 多维度代码审查（适配自 Claude Code code-review） |
+| **feature-dev** | 7 阶段引导式功能开发（适配自 Claude Code feature-dev） |
+| **frontend-design** | 前端设计美学指南（适配自 Claude Code frontend-design） |
+| **model-migration** | 通用 AI 模型迁移指南 |
+| **parallel-agents** | 多 Agent 并行编排 + 结果验证模式 |
+| **query-pipeline** | 查询管线多阶段处理 |
+| **plugin-development** | 插件开发完整指南 |
+
+### Rules（7 条）
 
 | Rule | 作用 | 生效范围 |
 |------|------|----------|
@@ -114,13 +138,16 @@ graph TB
 | **completion-gate** | 完成前必须验证 + 记忆提取 | 所有文件 |
 | **search-first** | 搜索优先于全文读取 | 所有文件 |
 | **typescript-conventions** | TypeScript 编码规范 | `*.ts, *.tsx` |
+| **safety-hooks** | 🔒 安全拦截系统（模拟 HookPoint 事件模型） | 所有文件 |
+| **explanatory-style** | 教学型输出风格 | 按需启用 |
+| **learning-style** | 互动学习模式 | 按需启用 |
 
-### Subagents (4 个)
+### Subagents（4 个）
 
 | Agent | 专长 | 触发场景 |
 |-------|------|----------|
-| **architect** | 架构设计与技术决策 | 大型功能规划、系统设计 |
-| **code-reviewer** | 代码审查 | 代码修改后、PR 前 |
+| **architect** | 架构设计与技术决策（增强版：含蓝图、数据流、分阶段构建） | 大型功能规划、系统设计 |
+| **code-reviewer** | 6 维度代码审查（bug/安全/错误处理/类型/注释/简化） | 代码修改后、PR 前 |
 | **debugger** | 调试与问题诊断 | 运行时错误、测试失败 |
 | **security-reviewer** | 安全审计 | 认证/加密/输入处理相关变更 |
 
@@ -220,12 +247,13 @@ pip install -r ClaudeCursorX/requirements.txt
 → Cursor 会自动调用 release_notes 工具
 ```
 
-### 记忆系统
+### 记忆系统（统一持久化）
 
-工具包内置了跨会话记忆持久化能力：
+工具包提供两套互补的跨会话记忆能力，**全部文件持久化**：
 
-- **个人记忆**: `memory_save` / `memory_search` / `memory_read` — 保存在项目 `.cursor/memory.md`
-- **团队记忆**: `team_memory_save` / `team_memory_sync` — 保存在 `.cursor/team-memory/`，通过 Git 同步
+- **agent-tools 记忆**：`memory_save` / `memory_search` / `memory_consolidate` — 以 JSON 格式持久化到 `~/.cursor/memory/memories.json`，支持类型标签、重要度权重、Jaccard 去重
+- **code-intel 记忆**：`memory_save` / `memory_search` / `memory_read` — 以 Markdown 持久化到项目 `.cursor/memory.md`，面向决策/模式/约定类知识
+- **团队记忆**：`team_memory_save` / `team_memory_sync` — 保存在 `.cursor/team-memory/`，通过 Git 同步，含密钥泄漏检测
 
 ### 自定义扩展
 
@@ -384,21 +412,26 @@ graph TB
 
 ### Feature List
 
-#### MCP Servers (34 Tools)
+#### MCP Servers (5 servers, 50 tools, 11 prompts)
 
 | Server | Tool | Description |
 |--------|------|-------------|
 | **agent-tools** | `token_count` | Estimate token count for text |
 | | `project_map` | Generate project structure map |
 | | `dependency_graph` | Analyze module dependencies |
-| | `test_runner` | Run test cases |
+| | `permission_check` | 🔒 Dual-layer permission check (Allow/Deny/Ask) |
+| | `metrics_record` | 📊 Record performance metrics (file-persisted) |
+| | `metrics_report` | 📊 Generate performance report |
+| | `memory_save` | 🧠 Save memory (file-persisted, survives restarts) |
+| | `memory_search` | 🧠 Search memories (by type/tags/importance) |
+| | `memory_consolidate` | 🧠 Consolidate memories (Jaccard dedup) |
 | **code-intel** | `analyze_impact` | Analyze code change impact scope |
 | | `module_summary` | Generate module summary |
 | | `find_test_coverage` | Find test coverage information |
 | | `symbol_references` | Find symbol references |
 | | `dependency_graph` | Dependency analysis |
 | | `project_overview` | Project overview |
-| | `memory_save` | Save decision memory to persistent file |
+| | `memory_save` | Save decision memory to `.cursor/memory.md` |
 | | `memory_search` | Search historical memory |
 | | `memory_read` | Read all memories |
 | | `team_memory_sync` | Team memory Git sync |
@@ -422,17 +455,36 @@ graph TB
 | | `cron_manager` | Simple scheduled tasks |
 | | `lsp_diagnostics` | LSP deep diagnostics |
 | | `prompt_suggestion` | Smart next-step suggestions |
+| | `security_scan` | 🔒 Security risk scan (8 rules) |
+| | `hookify_evaluate` | ⚡ Hook rule engine evaluation |
+| | `hookify_validate_rules` | ⚡ Hook rule validation |
+| | `audit_log` | 📋 Audit event logging (8 event types) |
+| | `audit_query` | 📋 Audit log query |
+| | `sandbox_check` | 🔒 Sandbox command safety check |
+| | `context_compress` | 📦 Smart context compression (importance-aware) |
+| | `feature_flags` | 🎛️ Feature flag management |
+| | `editor_detect` | 🖥️ Editor compatibility detection |
+| | `plugin_registry` | 📦 Plugin registry scan & validation |
 
-#### Skills (4 Sets)
+**MCP Prompts (11)**: `code_review` · `bug_analysis` · `refactor_plan` · `security_audit` · `explain_code` · `write_tests` · `performance_review` · `api_design_review` · `quick_commit` · `commit_push_pr` · `clean_gone_branches`
 
-| Skill | Description | Files |
-|-------|-------------|-------|
-| **agent-loop-orchestrator** | Core Agent loop logic with 10 advanced patterns (deep review, sub-agent coordination, session guidance, etc.) | `SKILL.md` + `patterns.md` |
-| **tool-strategy** | Tool selection strategies and advanced orchestration patterns (parallel search, large file handling, context reuse) | `SKILL.md` + `advanced-patterns.md` |
-| **context-management** | Context token budget management, efficient navigation strategies for large codebases | `SKILL.md` + `large-codebase-guide.md` |
-| **quality-gate** | Quality gate workflow with multi-language checklists for TypeScript/Python/Rust and more | `SKILL.md` + `checklists.md` |
+#### Skills (11 Sets)
 
-#### Rules (4 Rules)
+| Skill | Description |
+|-------|-------------|
+| **agent-loop-orchestrator** | Core Agent loop logic with 10 advanced patterns |
+| **tool-strategy** | Tool selection strategies and advanced orchestration |
+| **context-management** | Context token budget management strategies |
+| **quality-gate** | Quality gate workflow with multi-language checklists |
+| **code-review** | Multi-dimensional code review (adapted from Claude Code) |
+| **feature-dev** | 7-phase guided feature development |
+| **frontend-design** | Frontend design aesthetics guide |
+| **model-migration** | General AI model migration guide |
+| **parallel-agents** | Multi-agent parallel orchestration + result validation |
+| **query-pipeline** | Multi-stage query processing pipeline |
+| **plugin-development** | Complete plugin development guide |
+
+#### Rules (7 Rules)
 
 | Rule | Purpose | Scope |
 |------|---------|-------|
@@ -440,13 +492,16 @@ graph TB
 | **completion-gate** | Must verify + extract memory before completion | All files |
 | **search-first** | Search before full-file reading | All files |
 | **typescript-conventions** | TypeScript coding conventions | `*.ts, *.tsx` |
+| **safety-hooks** | 🔒 Safety interception system (simulates HookPoint events) | All files |
+| **explanatory-style** | Educational/explanatory output style | On-demand |
+| **learning-style** | Interactive learning mode | On-demand |
 
 #### Subagents (4 Agents)
 
 | Agent | Specialty | Trigger Scenarios |
 |-------|-----------|-------------------|
-| **architect** | Architecture design and technical decisions | Large feature planning, system design |
-| **code-reviewer** | Code review | After code changes, before PR |
+| **architect** | Architecture design (enhanced: blueprint, data flow, phased build) | Large feature planning, system design |
+| **code-reviewer** | 6-dimension code review (bugs/security/error handling/types/docs/simplification) | After code changes, before PR |
 | **debugger** | Debugging and problem diagnosis | Runtime errors, test failures |
 | **security-reviewer** | Security audit | Changes related to auth/encryption/input handling |
 
@@ -546,12 +601,13 @@ Generate release notes for this version
 → Cursor will automatically call the release_notes tool
 ```
 
-#### Memory System
+#### Memory System (Unified Persistence)
 
-The toolkit includes built-in cross-session memory persistence:
+The toolkit provides two complementary cross-session memory systems, **all file-persisted**:
 
-- **Personal Memory**: `memory_save` / `memory_search` / `memory_read` — stored in `.cursor/memory.md`
-- **Team Memory**: `team_memory_save` / `team_memory_sync` — stored in `.cursor/team-memory/`, synced via Git
+- **agent-tools Memory**: `memory_save` / `memory_search` / `memory_consolidate` — JSON-persisted to `~/.cursor/memory/memories.json` with type tags, importance weighting, and Jaccard dedup
+- **code-intel Memory**: `memory_save` / `memory_search` / `memory_read` — Markdown-persisted to `.cursor/memory.md`, focused on decisions/patterns/conventions
+- **Team Memory**: `team_memory_save` / `team_memory_sync` — stored in `.cursor/team-memory/`, synced via Git, with secret leak detection
 
 ### Customization
 

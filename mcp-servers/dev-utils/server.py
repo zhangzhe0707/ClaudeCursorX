@@ -19,6 +19,7 @@ Dev Utils MCP Server — 开发辅助工具集。
 15. context_compress  — 上下文压缩（借鉴 claude-code-rust ContextCompressor）
 16. feature_flags     — 特性开关管理（借鉴 claude-code-rust FeatureManager）
 17. editor_detect     — 编辑器兼容检测（借鉴 claude-code-rust EditorIntegrationManager）
+18. plugin_registry   — 插件注册表扫描与验证（借鉴 claude-code-rust PluginManager）
 """
 
 from __future__ import annotations
@@ -1269,21 +1270,47 @@ def sandbox_check(
 
 # ─── 上下文压缩器（借鉴 claude-code-rust query/compressor） ─────────────────
 
+_ROLE_PRIORITY = {
+    "system": 3,
+    "user": 2,
+    "assistant": 1,
+    "tool": 0,
+}
+
+
+def _msg_importance(msg: dict) -> float:
+    """计算消息重要度（综合 role、长度、位置信号）。"""
+    role = msg.get("role", "")
+    content = msg.get("content", "")
+
+    base = _ROLE_PRIORITY.get(role, 0) / 3.0
+
+    has_code = 1.0 if ("```" in content or "def " in content or "function " in content) else 0.0
+    has_error = 1.0 if ("error" in content.lower() or "exception" in content.lower()) else 0.0
+
+    length_signal = min(len(content) / 2000, 1.0)
+
+    return base * 0.4 + has_code * 0.2 + has_error * 0.2 + length_signal * 0.2
+
+
 @mcp.tool()
 def context_compress(
     messages_json: str,
     max_tokens: int = 100000,
     keep_recent: int = 5,
+    strategy: str = "smart",
     language: str = "zh",
 ) -> str:
-    """Compress conversation context to fit token budget. / 压缩对话上下文以适应 token 预算。
+    """Compress conversation context with importance-aware strategy. / 智能压缩对话上下文。
 
-    Adapted from claude-code-rust's ContextCompressor + QueryPipeline.
+    Enhanced with importance weighting and message-type awareness,
+    adapted from claude-code-rust's ContextCompressor + QueryPipeline 6-stage model.
 
     Args:
         messages_json: JSON array of messages [{"role": "...", "content": "..."}]
         max_tokens: Maximum token budget
         keep_recent: Number of recent messages to always keep
+        strategy: "smart" (importance-aware) or "simple" (tail-truncation)
         language: "zh" (default) or "en"
     """
     is_zh = language.strip().lower() not in ("en", "english")
@@ -1308,34 +1335,66 @@ def context_compress(
                             "original_tokens": total, "compressed_tokens": total,
                             "messages": messages}, ensure_ascii=False, indent=2)
 
-    # 保留最近 keep_recent 条 + 第一条（系统提示）
     if len(messages) <= keep_recent + 1:
         msg = "消息太少无法压缩" if is_zh else "Too few messages to compress"
         return json.dumps({"status": "ok", "message": msg, "messages": messages},
                            ensure_ascii=False, indent=2)
 
-    kept = [messages[0]] + messages[-keep_recent:]
+    # 第一条（系统提示）和最后 keep_recent 条始终保留
+    first = messages[0]
+    recent = messages[-keep_recent:]
+    middle = messages[1:-keep_recent]
+
+    if strategy == "smart" and middle:
+        scored = [(i, _msg_importance(m), m) for i, m in enumerate(middle)]
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        kept_middle = []
+        budget = max_tokens - estimate_tokens(first.get("content", "")) - \
+                 sum(estimate_tokens(m.get("content", "")) for m in recent)
+
+        for _, score, m in scored:
+            tokens = estimate_tokens(m.get("content", ""))
+            if budget >= tokens:
+                kept_middle.append(m)
+                budget -= tokens
+            elif budget > 200:
+                ratio = budget / tokens
+                m_copy = dict(m)
+                m_copy["content"] = m["content"][:int(len(m["content"]) * ratio)] + "\n... [truncated]"
+                kept_middle.append(m_copy)
+                budget = 0
+            if budget <= 0:
+                break
+
+        kept = [first] + kept_middle + recent
+    else:
+        kept = [first] + recent
+
     new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
 
-    # 如果仍超预算，截断最长消息的 content
+    # 最后兜底：如果仍超预算，截断最长的中间消息
     if new_total > max_tokens:
-        for m in kept[1:]:
+        for m in kept[1:-keep_recent] if len(kept) > keep_recent + 1 else kept[1:]:
             content = m.get("content", "")
             tokens = estimate_tokens(content)
-            if tokens > max_tokens // keep_recent:
-                ratio = (max_tokens // keep_recent) / tokens
+            if tokens > max_tokens // (keep_recent + 1):
+                ratio = (max_tokens // (keep_recent + 1)) / tokens
                 m["content"] = content[:int(len(content) * ratio)] + "\n... [truncated]"
         new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
 
-    msg = (f"压缩完成：{total} → {new_total} tokens" if is_zh
-           else f"Compressed: {total} → {new_total} tokens")
+    dropped = len(messages) - len(kept)
+    msg = (f"压缩完成：{total} → {new_total} tokens（丢弃 {dropped} 条低重要度消息）" if is_zh
+           else f"Compressed: {total} → {new_total} tokens (dropped {dropped} low-importance messages)")
     return json.dumps({
         "status": "ok",
         "message": msg,
+        "strategy": strategy,
         "original_tokens": total,
         "compressed_tokens": new_total,
         "original_count": len(messages),
         "compressed_count": len(kept),
+        "dropped_count": dropped,
         "messages": kept,
     }, ensure_ascii=False, indent=2)
 
@@ -1441,6 +1500,132 @@ def editor_detect(language: str = "zh") -> str:
 
     title = "编辑器检测结果" if is_zh else "Editor Detection Result"
     return json.dumps({"title": title, **editor_info}, ensure_ascii=False, indent=2)
+
+
+# ─── 插件注册表（借鉴 claude-code-rust plugins/registry） ────────────────────
+
+from pathlib import Path as _Path
+
+
+@mcp.tool()
+def plugin_registry(
+    action: str = "list",
+    scan_dir: str = "",
+    language: str = "zh",
+) -> str:
+    """Scan and list available MCP servers, skills, rules, and agents. / 扫描并列出可用的插件资产。
+
+    Provides a local plugin registry by scanning project directories,
+    adapted from claude-code-rust's PluginManager + registry pattern.
+
+    Args:
+        action: "list" (scan and list all) or "validate" (check for issues)
+        scan_dir: Project root to scan (defaults to cwd)
+        language: "zh" (default) or "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+    root = _Path(scan_dir).resolve() if scan_dir else _Path.cwd()
+
+    registry: dict = {
+        "mcp_servers": [],
+        "skills": [],
+        "rules": [],
+        "agents": [],
+    }
+    issues: list[str] = []
+
+    # 扫描 MCP Servers
+    for server_dir in [root / "mcp-servers", root / ".cursor" / "mcp-servers"]:
+        if server_dir.is_dir():
+            for child in sorted(server_dir.iterdir()):
+                server_py = child / "server.py" if child.is_dir() else None
+                if server_py and server_py.exists():
+                    content = server_py.read_text(encoding="utf-8", errors="replace")
+                    tool_count = content.count("@mcp.tool()")
+                    prompt_count = content.count("@mcp.prompt()")
+                    registry["mcp_servers"].append({
+                        "name": child.name,
+                        "path": str(child.relative_to(root)),
+                        "tools": tool_count,
+                        "prompts": prompt_count,
+                    })
+
+    # 扫描 Skills
+    for skills_dir in [root / "skills", root / ".cursor" / "skills"]:
+        if skills_dir.is_dir():
+            for child in sorted(skills_dir.iterdir()):
+                skill_file = child / "SKILL.md" if child.is_dir() else None
+                if skill_file and skill_file.exists():
+                    first_line = skill_file.read_text(encoding="utf-8", errors="replace").split("\n")[0]
+                    registry["skills"].append({
+                        "name": child.name,
+                        "title": first_line.lstrip("# ").strip(),
+                        "path": str(child.relative_to(root)),
+                    })
+
+    # 扫描 Rules
+    for rules_dir in [root / "rules", root / ".cursor" / "rules"]:
+        if rules_dir.is_dir():
+            for f in sorted(rules_dir.glob("*.mdc")):
+                content = f.read_text(encoding="utf-8", errors="replace")
+                desc = ""
+                for line in content.split("\n"):
+                    if line.startswith("description:"):
+                        desc = line.split(":", 1)[1].strip().strip('"')
+                        break
+                always = "alwaysApply: true" in content
+                registry["rules"].append({
+                    "name": f.stem,
+                    "description": desc[:100],
+                    "always_apply": always,
+                    "path": str(f.relative_to(root)),
+                })
+
+    # 扫描 Agents
+    for agents_dir in [root / "agents", root / ".cursor" / "agents"]:
+        if agents_dir.is_dir():
+            for f in sorted(agents_dir.glob("*.md")):
+                content = f.read_text(encoding="utf-8", errors="replace")
+                name = f.stem
+                desc = ""
+                for line in content.split("\n"):
+                    if line.strip().startswith("description:"):
+                        desc = line.split(":", 1)[1].strip()
+                        break
+                registry["agents"].append({
+                    "name": name,
+                    "description": desc[:120],
+                    "path": str(f.relative_to(root)),
+                })
+
+    if action == "validate":
+        # 检查 mcp.json 中的服务器是否都有对应目录
+        mcp_json = root / ".cursor" / "mcp.json"
+        if mcp_json.exists():
+            try:
+                cfg = json.loads(mcp_json.read_text(encoding="utf-8"))
+                registered = set(cfg.get("mcpServers", {}).keys())
+                found = {s["name"] for s in registry["mcp_servers"]}
+                for name in registered - found:
+                    issues.append(f"mcp.json 注册了 '{name}' 但未找到 server.py" if is_zh
+                                  else f"mcp.json registers '{name}' but server.py not found")
+            except json.JSONDecodeError:
+                issues.append("mcp.json 格式错误" if is_zh else "mcp.json is malformed")
+
+    summary = {
+        "mcp_servers": len(registry["mcp_servers"]),
+        "skills": len(registry["skills"]),
+        "rules": len(registry["rules"]),
+        "agents": len(registry["agents"]),
+        "total_tools": sum(s["tools"] for s in registry["mcp_servers"]),
+        "total_prompts": sum(s["prompts"] for s in registry["mcp_servers"]),
+    }
+
+    title = "插件注册表" if is_zh else "Plugin Registry"
+    result: dict = {"title": title, "summary": summary, "registry": registry}
+    if issues:
+        result["issues"] = issues
+    return json.dumps(result, ensure_ascii=False, indent=2)
 
 
 if __name__ == "__main__":

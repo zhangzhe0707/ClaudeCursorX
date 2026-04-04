@@ -57,13 +57,39 @@ After all return:
 
 ### Pattern 4: Validate-then-Act (serial + parallel)
 
-Use when issues need verification before acting:
+**CRITICAL — This is the most important pattern. Always use it for code review.**
+
+Use when issues need verification before acting. This prevents false positives from eroding trust.
 
 ```
-Step 1 (parallel): Launch N agents to find issues
-Step 2 (parallel): For each issue, launch a validation agent
-Step 3 (serial): Filter unvalidated issues, present confirmed ones
+Step 1 — Discovery (parallel):
+  Launch N agents to independently find issues
+  Each agent returns: [{issue, file, line, confidence, reason}]
+
+Step 2 — Validation (parallel):
+  For EACH issue with confidence < 95%:
+    Launch a validation agent with:
+      - The issue description
+      - The relevant code context (file:line ± 20 lines)
+      - The PR/change description
+    Agent checks: "Is this truly a bug/violation, or a false positive?"
+    Returns: {validated: true/false, confidence_adjusted, explanation}
+
+Step 3 — Filtering (serial):
+  Remove all issues where validation returned validated=false
+  Remove all issues where confidence_adjusted < 80%
+  This is the HIGH SIGNAL issue list
+
+Step 4 — Presentation:
+  Group by severity (Critical > Important > Suggestion)
+  For each issue: file:line, description, fix suggestion
+  If no issues remain: "No issues found. Checked for [dimensions]."
 ```
+
+**Why this matters**: Without validation, parallel review agents tend to produce
+10-30% false positives. The validation step typically removes 40-60% of flagged
+issues, leaving only genuine problems. This is adapted from Claude Code's
+code-review plugin which uses this exact 2-pass pattern.
 
 ## Agent Selection Guide
 

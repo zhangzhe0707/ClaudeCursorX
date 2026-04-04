@@ -7,11 +7,11 @@ Agent Tools MCP Server — 为 Cursor 提供 Claude Code 风格的增强工具�
 3. project_map      — 一次性生成项目结构摘要
 4. dependency_graph — 分析模块间的 import 依赖关系
 5. permission_check — 工具权限检查（借鉴 claude-code-rust 双层权限模型）
-6. metrics_record   — 性能指标记录（借鉴 claude-code-rust MetricsCollector）
-7. metrics_report   — 性能报告生成
-8. memory_save      — 跨会话记忆保存（借鉴 claude-code-rust MemoryManager）
-9. memory_search    — 记忆搜索
-10. memory_consolidate — 记忆整合（Jaccard 相似度去重）
+6. metrics_record   — 性能指标记录（文件持久化，借鉴 claude-code-rust MetricsCollector）
+7. metrics_report   — 性能报告生成（从持久化数据读取）
+8. memory_save      — 跨会话记忆保存（文件持久化至 ~/.cursor/memory/memories.json）
+9. memory_search    — 记忆搜索（支持类型/标签/重要度过滤）
+10. memory_consolidate — 记忆整合（Jaccard 相似度去重，持久化）
 
 启动方式：
   pip install mcp fastmcp tiktoken
@@ -455,15 +455,29 @@ def permission_check(
     return json.dumps({"decision": "allow", "reason": label}, ensure_ascii=False)
 
 
-# ─── 性能指标收集（借鉴 claude-code-rust performance/metrics） ────────────────
+# ─── 性能指标收集（文件持久化，借鉴 claude-code-rust performance/metrics） ────
 
 import time as _time
 
-_METRICS: dict = {
-    "counters": {},
-    "snapshots": [],
-    "start_time": _time.time(),
-}
+_METRICS_DIR = _Path(os.environ.get("METRICS_DIR", _Path.home() / ".cursor" / "metrics"))
+_METRICS_FILE = _METRICS_DIR / "metrics.json"
+_METRICS_START = _time.time()
+
+
+def _load_metrics() -> dict:
+    """从 JSON 文件加载指标数据。"""
+    if _METRICS_FILE.exists():
+        try:
+            return json.loads(_METRICS_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"counters": {}, "start_time": _METRICS_START}
+
+
+def _save_metrics(data: dict) -> None:
+    """将指标数据写回 JSON 文件。"""
+    _METRICS_DIR.mkdir(parents=True, exist_ok=True)
+    _METRICS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 @mcp.tool()
@@ -473,9 +487,7 @@ def metrics_record(
     attributes: str = "{}",
     language: str = "zh",
 ) -> str:
-    """Record a performance metric. / 记录性能指标。
-
-    Adapted from claude-code-rust's MetricsCollector + PerformanceMonitor.
+    """Record a performance metric (persisted to file). / 记录性能指标（持久化到文件）。
 
     Args:
         event: Metric event name (e.g. "tool_call", "api_latency_ms", "token_usage")
@@ -490,7 +502,8 @@ def metrics_record(
     except json.JSONDecodeError:
         attrs = {}
 
-    counters = _METRICS["counters"]
+    data = _load_metrics()
+    counters = data.setdefault("counters", {})
     if event not in counters:
         counters[event] = {"total": 0.0, "count": 0, "history": []}
 
@@ -501,32 +514,35 @@ def metrics_record(
         "time": _time.time(),
         "attributes": attrs,
     })
-    # 保留最近 200 条
     if len(counters[event]["history"]) > 200:
         counters[event]["history"] = counters[event]["history"][-200:]
 
+    _save_metrics(data)
+
     msg = f"已记录 {event}={value}" if is_zh else f"Recorded {event}={value}"
     return json.dumps({"status": "ok", "message": msg, "event": event,
+                        "file": str(_METRICS_FILE),
                         "total": counters[event]["total"],
                         "count": counters[event]["count"]}, ensure_ascii=False)
 
 
 @mcp.tool()
 def metrics_report(language: str = "zh") -> str:
-    """Generate a performance report. / 生成性能报告。
+    """Generate a performance report (from persisted data). / 生成性能报告。
 
     Args:
         language: "zh" (default) or "en"
     """
     is_zh = language.strip().lower() not in ("en", "english")
-    uptime = _time.time() - _METRICS["start_time"]
+    data = _load_metrics()
+    uptime = _time.time() - data.get("start_time", _METRICS_START)
 
     report = {}
-    for name, data in _METRICS["counters"].items():
-        avg = data["total"] / data["count"] if data["count"] > 0 else 0
+    for name, counter in data.get("counters", {}).items():
+        avg = counter["total"] / counter["count"] if counter["count"] > 0 else 0
         report[name] = {
-            "total": data["total"],
-            "count": data["count"],
+            "total": counter["total"],
+            "count": counter["count"],
             "average": round(avg, 3),
         }
 
@@ -534,21 +550,37 @@ def metrics_report(language: str = "zh") -> str:
     return json.dumps({
         "title": title,
         "uptime_seconds": round(uptime, 1),
+        "file": str(_METRICS_FILE),
         "metrics": report,
     }, ensure_ascii=False, indent=2)
 
 
-# ─── 记忆管理系统（借鉴 claude-code-rust memory 模块） ────────────────────────
+# ─── 记忆管理系统（文件持久化，统一 code-intel/memory.py 与本模块） ────────────
 
 import hashlib as _hashlib
-from collections import OrderedDict as _OrderedDict
-
-_MEMORY_STORE: dict = {
-    "entries": _OrderedDict(),
-    "max_entries": 500,
-}
+from pathlib import Path as _Path
 
 MEMORY_TYPES = ["session", "conversation", "knowledge", "preference", "task", "error", "insight"]
+
+_MEMORY_DIR = _Path(os.environ.get("MEMORY_DIR", _Path.home() / ".cursor" / "memory"))
+_MEMORY_FILE = _MEMORY_DIR / "memories.json"
+_MAX_MEMORIES = 500
+
+
+def _load_memories() -> list[dict]:
+    """从 JSON 文件加载记忆。"""
+    if not _MEMORY_FILE.exists():
+        return []
+    try:
+        return json.loads(_MEMORY_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_memories(entries: list[dict]) -> None:
+    """将记忆写回 JSON 文件。"""
+    _MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+    _MEMORY_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 @mcp.tool()
@@ -559,9 +591,7 @@ def memory_save(
     tags: str = "",
     language: str = "zh",
 ) -> str:
-    """Save a memory entry for cross-session recall. / 保存记忆条目以供跨会话召回。
-
-    Adapted from claude-code-rust's MemoryManager + ConsolidationEngine.
+    """Save a memory entry with file persistence. / 保存记忆条目（文件持久化，跨会话不丢失）。
 
     Args:
         content: Memory content
@@ -587,17 +617,20 @@ def memory_save(
         "timestamp": _time.time(),
     }
 
-    store = _MEMORY_STORE["entries"]
-    store[entry_id] = entry
+    entries = _load_memories()
+    entries.append(entry)
 
-    # 超出上限时按 importance 最低淘汰（借鉴 consolidation 策略）
-    while len(store) > _MEMORY_STORE["max_entries"]:
-        min_key = min(store, key=lambda k: store[k]["importance"])
-        del store[min_key]
+    # 超出上限时按 importance 最低淘汰
+    if len(entries) > _MAX_MEMORIES:
+        entries.sort(key=lambda e: e["importance"])
+        entries = entries[-(int(_MAX_MEMORIES)):]
 
-    msg = f"记忆已保存 (id={entry_id})" if is_zh else f"Memory saved (id={entry_id})"
+    _save_memories(entries)
+
+    msg = f"记忆已持久化保存 (id={entry_id})" if is_zh else f"Memory persisted (id={entry_id})"
     return json.dumps({"status": "ok", "message": msg, "id": entry_id,
-                        "total_memories": len(store)}, ensure_ascii=False)
+                        "file": str(_MEMORY_FILE),
+                        "total_memories": len(entries)}, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -609,7 +642,7 @@ def memory_search(
     limit: int = 20,
     language: str = "zh",
 ) -> str:
-    """Search stored memories. / 搜索已存储的记忆。
+    """Search persisted memories. / 搜索持久化记忆。
 
     Args:
         query: Text substring to search for
@@ -622,19 +655,20 @@ def memory_search(
     is_zh = language.strip().lower() not in ("en", "english")
     tag_filter = {t.strip() for t in tags.split(",") if t.strip()} if tags else set()
 
+    entries = _load_memories()
     results = []
-    for entry in _MEMORY_STORE["entries"].values():
-        if memory_type and entry["type"] != memory_type:
+    for entry in entries:
+        if memory_type and entry.get("type") != memory_type:
             continue
-        if entry["importance"] < min_importance:
+        if entry.get("importance", 0) < min_importance:
             continue
-        if query and query.lower() not in entry["content"].lower():
+        if query and query.lower() not in entry.get("content", "").lower():
             continue
         if tag_filter and not tag_filter.intersection(entry.get("tags", [])):
             continue
         results.append(entry)
 
-    results.sort(key=lambda e: e["importance"], reverse=True)
+    results.sort(key=lambda e: e.get("importance", 0), reverse=True)
     results = results[:limit]
 
     title = f"找到 {len(results)} 条记忆" if is_zh else f"Found {len(results)} memories"
@@ -644,44 +678,41 @@ def memory_search(
 
 @mcp.tool()
 def memory_consolidate(language: str = "zh") -> str:
-    """Consolidate memories: remove low-value duplicates. / 整合记忆：删除低价值重复项。
-
-    Adapted from claude-code-rust's ConsolidationEngine (Jaccard similarity + importance).
+    """Consolidate memories: remove low-value duplicates (persisted). / 整合记忆：删除低价值重复项。
 
     Args:
         language: "zh" (default) or "en"
     """
     is_zh = language.strip().lower() not in ("en", "english")
 
-    store = _MEMORY_STORE["entries"]
-    before = len(store)
+    entries = _load_memories()
+    before = len(entries)
     if before == 0:
         msg = "无记忆可整合" if is_zh else "No memories to consolidate"
         return json.dumps({"status": "ok", "message": msg}, ensure_ascii=False)
 
-    entries = list(store.values())
-    to_remove = set()
-
+    to_remove: set[int] = set()
     for i, a in enumerate(entries):
-        if a["id"] in to_remove:
+        if i in to_remove:
             continue
-        words_a = set(a["content"].lower().split())
+        words_a = set(a.get("content", "").lower().split())
         for j in range(i + 1, len(entries)):
-            b = entries[j]
-            if b["id"] in to_remove or a["type"] != b["type"]:
+            if j in to_remove:
                 continue
-            words_b = set(b["content"].lower().split())
+            b = entries[j]
+            if a.get("type") != b.get("type"):
+                continue
+            words_b = set(b.get("content", "").lower().split())
             inter = len(words_a & words_b)
             union = len(words_a | words_b)
-            similarity = inter / union if union > 0 else 0
-            if similarity > 0.7:
-                victim = a["id"] if a["importance"] <= b["importance"] else b["id"]
+            if union > 0 and inter / union > 0.7:
+                victim = i if a.get("importance", 0) <= b.get("importance", 0) else j
                 to_remove.add(victim)
 
-    for rid in to_remove:
-        store.pop(rid, None)
+    kept = [e for idx, e in enumerate(entries) if idx not in to_remove]
+    _save_memories(kept)
 
-    after = len(store)
+    after = len(kept)
     msg = (f"整合完成：{before} → {after}（移除 {before - after} 条重复）" if is_zh
            else f"Consolidation done: {before} → {after} (removed {before - after} duplicates)")
     return json.dumps({"status": "ok", "message": msg,
