@@ -404,55 +404,153 @@ DANGEROUS_PATTERNS = [
 ]
 
 
+def _check_path_globs(tool_input: str, allowed_globs: list[str], denied_globs: list[str]) -> tuple[str, str]:
+    """检查路径是否匹配 glob 规则，返回 (decision, reason)。
+
+    Checks path against glob allow/deny rules. Returns (decision, reason).
+    """
+    from fnmatch import fnmatch
+    import os
+
+    # 从 tool_input 中提取可能的路径
+    paths = []
+    for token in tool_input.replace(",", " ").split():
+        if "/" in token or token.endswith((".py", ".ts", ".js", ".json", ".yml", ".yaml",
+                                           ".env", ".key", ".pem", ".lock")):
+            paths.append(token)
+
+    for path in paths:
+        basename = os.path.basename(path)
+        for pat in denied_globs:
+            if fnmatch(path, pat) or fnmatch(basename, pat):
+                return "deny", f"path '{path}' matches deny rule '{pat}'"
+
+    if allowed_globs and paths:
+        for path in paths:
+            basename = os.path.basename(path)
+            if not any(fnmatch(path, pat) or fnmatch(basename, pat) for pat in allowed_globs):
+                return "ask", f"path '{path}' not in allowed_paths"
+
+    return "allow", ""
+
+
 @mcp.tool()
 def permission_check(
     tool_name: str,
     tool_input: str = "",
     mode: str = "default",
+    agent_name: str = "",
+    allowed_paths: str = "",
+    disallowed_tools: str = "",
     language: str = "zh",
 ) -> str:
-    """Check tool permission before execution. / 执行工具前检查权限。
+    """Multi-layer permission check before tool execution. / 多层权限叠加检查。
 
-    Adapted from claude-code-rust's dual-layer permission model
-    (tools::permissions + security::permissions).
+    Implements OpenHarness-style multi-layer permission model:
+      Layer 1: Global always_deny / always_allow rules
+      Layer 2: Mode-based restrictions (plan → read-only, bypass → skip checks)
+      Layer 3: Agent-level disallowed_tools list
+      Layer 4: Path glob allow/deny rules
+      Layer 5: Dangerous pattern scan (regex)
+
+    Adapted from OpenHarness PermissionChecker + claude-code-rust dual-layer model.
 
     Args:
         tool_name: Name of the tool to check
-        tool_input: Input content to check (e.g. shell command)
-        mode: Permission mode — "default", "bypass", "plan"
+        tool_input: Input content to check (e.g. shell command or file path)
+        mode: Permission mode — "default" | "plan" (read-only) | "bypass" (skip checks)
+        agent_name: Agent requesting the tool (for agent-level restrictions)
+        allowed_paths: Comma-separated glob patterns for allowed paths (e.g. "src/**,tests/**")
+        disallowed_tools: Comma-separated tool names this agent cannot use
         language: "zh" (default) or "en"
     """
     is_zh = language.strip().lower() not in ("en", "english")
 
-    for rule in TOOL_PERMISSION_RULES.get("always_allow", []):
-        if re.match(rule, tool_name):
-            label = "允许（always_allow 规则）" if is_zh else "Allowed (always_allow rule)"
-            return json.dumps({"decision": "allow", "reason": label}, ensure_ascii=False)
+    def _result(decision: str, reason: str, layer: str, extra: dict | None = None) -> str:
+        r: dict = {"decision": decision, "reason": reason, "layer": layer}
+        if extra:
+            r.update(extra)
+        return json.dumps(r, ensure_ascii=False, indent=2)
 
+    # ── Layer 1: Global always_deny / always_allow ────────────────────────────
     for rule in TOOL_PERMISSION_RULES.get("always_deny", []):
         if re.match(rule, tool_name):
-            label = "拒绝（always_deny 规则）" if is_zh else "Denied (always_deny rule)"
-            return json.dumps({"decision": "deny", "reason": label}, ensure_ascii=False)
+            label = "拒绝（全局 always_deny 规则）" if is_zh else "Denied (global always_deny rule)"
+            return _result("deny", label, "global_always_deny")
 
+    for rule in TOOL_PERMISSION_RULES.get("always_allow", []):
+        if re.match(rule, tool_name):
+            label = "允许（全局 always_allow 规则）" if is_zh else "Allowed (global always_allow rule)"
+            return _result("allow", label, "global_always_allow")
+
+    # ── Layer 2: Mode-based restrictions ─────────────────────────────────────
+    if mode == "bypass":
+        label = "允许（bypass 模式，跳过所有检查）" if is_zh else "Allowed (bypass mode, all checks skipped)"
+        return _result("allow", label, "mode_bypass")
+
+    READ_ONLY_TOOLS = {"Read", "Grep", "Glob", "SemanticSearch", "ReadLints", "Shell"}
+    WRITE_TOOLS = {"Write", "StrReplace", "Delete", "EditNotebook"}
+
+    if mode == "plan" and tool_name in WRITE_TOOLS:
+        label = (f"拒绝（plan 模式禁止写操作：{tool_name}）" if is_zh
+                 else f"Denied (plan mode disallows write tool: {tool_name})")
+        return _result("deny", label, "mode_plan")
+
+    # ── Layer 3: Agent-level disallowed_tools ─────────────────────────────────
+    if disallowed_tools:
+        denied_set = {t.strip() for t in disallowed_tools.split(",") if t.strip()}
+        if tool_name in denied_set:
+            agent_label = f" (agent: {agent_name})" if agent_name else ""
+            label = (f"拒绝（Agent 禁用工具列表{agent_label}）" if is_zh
+                     else f"Denied (agent disallowed_tools{agent_label})")
+            return _result("deny", label, "agent_disallowed_tools")
+
+    # ── Layer 4: Path glob rules ──────────────────────────────────────────────
+    SENSITIVE_PATH_PATTERNS = [
+        "*.env", ".env*", "*credentials*", "*secret*", "*.key", "*.pem",
+        "*.p12", "*.pfx", "id_rsa", "id_ed25519",
+    ]
+    WARN_PATH_PATTERNS = ["*.lock", "package-lock.json", "yarn.lock", "go.sum"]
+
+    allowed_glob_list = [p.strip() for p in allowed_paths.split(",") if p.strip()]
+    denied_glob_list = SENSITIVE_PATH_PATTERNS.copy()
+
+    # 检查敏感路径
+    if tool_name in WRITE_TOOLS:
+        path_decision, path_reason = _check_path_globs(
+            tool_input, allowed_glob_list, denied_glob_list
+        )
+        if path_decision == "deny":
+            label = (f"拒绝（敏感路径：{path_reason}）" if is_zh
+                     else f"Denied (sensitive path: {path_reason})")
+            return _result("deny", label, "path_deny")
+
+        # 警告路径（lock 文件等）
+        _, warn_reason = _check_path_globs(tool_input, [], WARN_PATH_PATTERNS)
+        if warn_reason:
+            label = (f"需要确认（修改锁文件：{warn_reason}）" if is_zh
+                     else f"Requires confirmation (modifying lock file: {warn_reason})")
+            return _result("ask", label, "path_warn")
+
+        if path_decision == "ask":
+            label = (f"需要确认（路径超出允许范围：{path_reason}）" if is_zh
+                     else f"Requires confirmation (path outside allowed range: {path_reason})")
+            return _result("ask", label, "path_outside_allowed")
+
+    # ── Layer 5: Dangerous pattern scan ───────────────────────────────────────
     danger_hits = []
     for pat in DANGEROUS_PATTERNS:
         if re.search(pat, tool_input, re.IGNORECASE):
             danger_hits.append(pat)
 
     if danger_hits:
-        label = "需要确认（检测到危险模式）" if is_zh else "Requires approval (dangerous pattern detected)"
-        return json.dumps({
-            "decision": "ask",
-            "reason": label,
-            "matched_patterns": danger_hits,
-        }, ensure_ascii=False, indent=2)
+        label = "需要确认（检测到危险命令模式）" if is_zh else "Requires approval (dangerous command pattern detected)"
+        return _result("ask", label, "dangerous_pattern",
+                       {"matched_patterns": danger_hits})
 
-    if mode == "bypass":
-        label = "允许（bypass 模式）" if is_zh else "Allowed (bypass mode)"
-        return json.dumps({"decision": "allow", "reason": label}, ensure_ascii=False)
-
-    label = "允许" if is_zh else "Allowed"
-    return json.dumps({"decision": "allow", "reason": label}, ensure_ascii=False)
+    # ── All layers passed ─────────────────────────────────────────────────────
+    label = "允许（通过所有权限层检查）" if is_zh else "Allowed (passed all permission layers)"
+    return _result("allow", label, "default")
 
 
 # ─── 性能指标收集（文件持久化，借鉴 claude-code-rust performance/metrics） ────

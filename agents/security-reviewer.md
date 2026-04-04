@@ -1,16 +1,32 @@
 ---
 name: security-reviewer
+version: "2.0"
 description: >-
   Security audit specialist. Reviews code changes for vulnerabilities,
-  credential leaks, injection risks, and security anti-patterns. 
+  credential leaks, injection risks, and security anti-patterns.
   Use when reviewing PRs, implementing auth/crypto/input-handling,
   or after any security-sensitive change.
+backend_type: subprocess
 tools:
   - Read
   - Grep
   - Glob
   - Shell
   - SemanticSearch
+permissions:
+  mode: read_only
+  disallowed_tools:
+    - Write
+    - StrReplace
+    - Delete
+hooks:
+  - event: PRE_TOOL_USE
+    type: prompt
+    action: ask
+    match_tools: ["Shell", "Write", "StrReplace"]
+  - event: POST_TOOL_USE
+    type: command
+    action: log_only
 ---
 
 # Security Reviewer

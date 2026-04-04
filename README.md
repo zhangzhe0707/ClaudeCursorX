@@ -12,7 +12,7 @@
 
 ClaudeCursorX 是一个开箱即用的 Cursor IDE 增强工具包。通过 **MCP Server + Skills + Rules + Subagents** 四层架构，为 Cursor 注入接近 Claude Code 水平的智能编码能力。
 
-这不是 Claude Code 的复刻——它是针对 Cursor 架构特点的原生增强方案，经过对 Claude Code 源码的深度分析后设计而成。
+这不是 Claude Code 的复刻——它是针对 Cursor 架构特点的原生增强方案，经过对 **Claude Code**、**claude-code-rust** 和 **OpenHarness**（Claude Code 开源 Python 移植版）三个项目的深度分析后设计而成。最新版本从 OpenHarness 引入了完整的 **Hook 事件系统（4种类型+阻断机制）**、**文件 Mailbox 多 Agent 通信**、**OpenHarness 插件格式兼容**、**多层权限叠加模型**和**对话摘要压缩服务**。
 
 ## 架构
 
@@ -65,7 +65,7 @@ graph TB
 | **agent-tools** | `token_count` | 估算文本 token 数量 |
 | | `project_map` | 生成项目结构地图 |
 | | `dependency_graph` | 分析模块依赖关系 |
-| | `permission_check` | 🔒 双层权限检查（Allow/Deny/Ask） |
+| | `permission_check` | 🔒 五层权限（全局→模式→Agent→路径→危陪模式） |
 | | `metrics_record` | 📊 性能指标记录（文件持久化） |
 | | `metrics_report` | 📊 性能报告生成 |
 | | `memory_save` | 🧠 记忆保存（文件持久化，跨会话不丢失） |
@@ -107,10 +107,10 @@ graph TB
 | | `audit_log` | 📋 审计日志记录（8 种事件类型） |
 | | `audit_query` | 📋 审计日志查询 |
 | | `sandbox_check` | 🔒 沙箱命令安全检查 |
-| | `context_compress` | 📦 智能上下文压缩（importance 感知） |
+|| | `context_compress` | 📦 三策略上下文压缩（smart/summarize/simple，OpenHarness compact 风格） |
 | | `feature_flags` | 🎛️ 特性开关管理 |
 | | `editor_detect` | 🖥️ 编辑器兼容检测 |
-| | `plugin_registry` | 📦 插件注册表扫描与验证 |
+|| | `plugin_registry` | 📦 插件注册表扫描（兼容 .claude-plugin / OpenHarness 格式） |
 
 **MCP Prompts（11 个）**：`code_review` · `bug_analysis` · `refactor_plan` · `security_audit` · `explain_code` · `write_tests` · `performance_review` · `api_design_review` · `quick_commit` · `commit_push_pr` · `clean_gone_branches`
 
@@ -126,7 +126,7 @@ graph TB
 | **feature-dev** | 7 阶段引导式功能开发（适配自 Claude Code feature-dev） |
 | **frontend-design** | 前端设计美学指南（适配自 Claude Code frontend-design） |
 | **model-migration** | 通用 AI 模型迁移指南 |
-| **parallel-agents** | 多 Agent 并行编排 + 结果验证模式 |
+|| **parallel-agents** | 多 Agent 并行编排 + 结果验证 + 文件 Mailbox 通信（OpenHarness Swarm 风格） |
 | **query-pipeline** | 查询管线多阶段处理 |
 | **plugin-development** | 插件开发完整指南 |
 
@@ -138,7 +138,7 @@ graph TB
 | **completion-gate** | 完成前必须验证 + 记忆提取 | 所有文件 |
 | **search-first** | 搜索优先于全文读取 | 所有文件 |
 | **typescript-conventions** | TypeScript 编码规范 | `*.ts, *.tsx` |
-| **safety-hooks** | 🔒 安全拦截系统（模拟 HookPoint 事件模型） | 所有文件 |
+| **safety-hooks** | 🔒 Complete Hook system (4 types: command/http/prompt/agent, blocking mechanism, adapted from OpenHarness HookExecutor) | All files |
 | **explanatory-style** | 教学型输出风格 | 按需启用 |
 | **learning-style** | 互动学习模式 | 按需启用 |
 
@@ -146,10 +146,10 @@ graph TB
 
 | Agent | 专长 | 触发场景 |
 |-------|------|----------|
-| **architect** | 架构设计与技术决策（增强版：含蓝图、数据流、分阶段构建） | 大型功能规划、系统设计 |
-| **code-reviewer** | 6 维度代码审查（bug/安全/错误处理/类型/注释/简化） | 代码修改后、PR 前 |
-| **debugger** | 调试与问题诊断 | 运行时错误、测试失败 |
-| **security-reviewer** | 安全审计 | 认证/加密/输入处理相关变更 |
+|| **architect** | 架构设计与技术决策（含蓝图/数据流/分阶段构建），plan 模式只读权限 | 大型功能规划、系统设计 |
+|| **code-reviewer** | 6 维度代码审查（bug/安全/错误处理/类型/注释/简化），含权限声明和 Hook 配置 | 代码修改后、PR 前 |
+|| **debugger** | 调试与问题诊断，允许路径 glob 限制 + PRE/POST Hook 审计 | 运行时错误、测试失败 |
+|| **security-reviewer** | 安全审计，含 PRE_TOOL_USE prompt Hook 拦截写操作 | 认证/加密/输入处理相关变更 |
 
 ## 安装
 
@@ -366,7 +366,7 @@ ClaudeCursorX/
 
 ClaudeCursorX is a ready-to-use enhancement toolkit for Cursor IDE. Through a four-layer architecture of **MCP Servers + Skills + Rules + Subagents**, it brings Claude Code-level intelligent coding capabilities to Cursor.
 
-This is not a Claude Code clone — it's a native enhancement designed for Cursor's architecture, informed by deep analysis of Claude Code's source code.
+This is not a Claude Code clone — it's a native enhancement designed for Cursor's architecture, informed by deep analysis of **Claude Code**, **claude-code-rust**, and **OpenHarness** (an open-source Python port of Claude Code). The latest release incorporates key design patterns from OpenHarness: a complete **Hook event system (4 types + blocking)**, **file-based Mailbox multi-agent communication**, **OpenHarness plugin format compatibility**, **multi-layer permission model**, and **conversation summary compaction service**.
 
 ### Architecture
 
@@ -480,7 +480,7 @@ graph TB
 | **feature-dev** | 7-phase guided feature development |
 | **frontend-design** | Frontend design aesthetics guide |
 | **model-migration** | General AI model migration guide |
-| **parallel-agents** | Multi-agent parallel orchestration + result validation |
+| **parallel-agents** | Multi-agent parallel orchestration + result validation + file Mailbox communication (OpenHarness Swarm) |
 | **query-pipeline** | Multi-stage query processing pipeline |
 | **plugin-development** | Complete plugin development guide |
 
@@ -492,7 +492,7 @@ graph TB
 | **completion-gate** | Must verify + extract memory before completion | All files |
 | **search-first** | Search before full-file reading | All files |
 | **typescript-conventions** | TypeScript coding conventions | `*.ts, *.tsx` |
-| **safety-hooks** | 🔒 Safety interception system (simulates HookPoint events) | All files |
+| **safety-hooks** | 🔒 Complete Hook system (4 types: command/http/prompt/agent, blocking mechanism, adapted from OpenHarness HookExecutor) | All files |
 | **explanatory-style** | Educational/explanatory output style | On-demand |
 | **learning-style** | Interactive learning mode | On-demand |
 

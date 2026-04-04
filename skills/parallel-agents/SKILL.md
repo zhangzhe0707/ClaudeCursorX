@@ -103,6 +103,72 @@ code-review plugin which uses this exact 2-pass pattern.
 | Security audit | `security-reviewer` | default |
 | Isolated experiment | `best-of-n-runner` | default |
 
+## Pattern 5: File-based Mailbox Communication (OpenHarness Swarm)
+
+> 借鉴 OpenHarness `swarm/mailbox.py`：基于文件系统的原子队列，实现 Agent 间结构化消息传递。
+> Adapted from OpenHarness `swarm/mailbox.py`: atomic file-queue for structured inter-agent messaging.
+
+Use when agents need to **coordinate state**, not just return results to the orchestrator.
+
+```
+Mailbox directory layout (mirrors OpenHarness):
+  ~/.cursor/swarm/<team_id>/agents/<agent_id>/inbox/
+    msg-<timestamp>-<uuid>.json    ← 原子 rename 写入 / atomically renamed in
+
+Message schema:
+  {
+    "type": "task" | "permission_sync" | "shutdown" | "idle" | "result",
+    "from": "<agent_id>",
+    "to":   "<agent_id>",
+    "payload": { ... },
+    "timestamp": "<ISO-8601>"
+  }
+```
+
+### Mailbox Usage Pattern
+
+```
+Step 1 — Create team directory (orchestrator):
+  Shell: mkdir -p ~/.cursor/swarm/<team_id>/agents/<id>/inbox
+
+Step 2 — Spawn agents with mailbox path injected:
+  Task(prompt="... Write results to ~/.cursor/swarm/<team_id>/agents/main/inbox/msg-<ts>.json")
+
+Step 3 — Poll for messages (orchestrator):
+  Shell: ls ~/.cursor/swarm/<team_id>/agents/main/inbox/ | sort
+  Read each message file, process, then delete
+
+Step 4 — Shutdown signal:
+  Write {type:"shutdown"} to each agent's inbox when work is done
+```
+
+### When to Use Mailbox vs Star Topology
+
+| Scenario | Pattern |
+|----------|---------|
+| Independent analysis, merge at end | Star (Pattern 1-4) |
+| Agent needs partial results from peers | Mailbox |
+| Long-running tasks with progress updates | Mailbox |
+| Pipeline where A feeds B feeds C | Mailbox (chain) |
+
+## Pattern 6: Team Lifecycle (OpenHarness TeamLifecycle)
+
+> 借鉴 OpenHarness `swarm/team_lifecycle.py`：团队注册、持久化、生命周期管理。
+
+```
+Team record:
+  team_id: str           ← unique identifier
+  agents: list[AgentID]  ← members
+  status: "active" | "idle" | "done"
+  created_at: ISO-8601
+
+Lifecycle:
+  1. Orchestrator creates team record → writes to ~/.cursor/swarm/teams/<id>.json
+  2. Spawns agents (each registers itself)
+  3. Monitors via mailbox polling
+  4. On completion: writes final summary, marks team "done", cleans up inboxes
+```
+
 ## Key Rules
 
 1. **Always launch parallel agents in a single message** — multiple Task tool calls in one response
@@ -110,6 +176,8 @@ code-review plugin which uses this exact 2-pass pattern.
 3. **Star topology** — agents don't talk to each other; the orchestrator (you) merges results
 4. **Deduplicate** — multiple agents may find the same issue; consolidate before presenting
 5. **Wait for all** — don't act on partial results unless explicitly asked
+6. **Use mailbox for stateful coordination** — when agents need to share intermediate state
+7. **Atomic writes only** — always write to a temp file first, then rename to inbox (prevents partial reads)
 
 ## Anti-patterns
 
@@ -117,3 +185,4 @@ code-review plugin which uses this exact 2-pass pattern.
 - Don't launch more than 4 parallel agents (diminishing returns + cost)
 - Don't skip the merge step — raw agent output is too verbose for the user
 - Don't use `fast` model for deep analysis tasks — it lacks reasoning depth
+- Don't poll mailbox too frequently — 2-5 second intervals are sufficient

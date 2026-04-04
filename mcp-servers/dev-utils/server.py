@@ -1293,6 +1293,37 @@ def _msg_importance(msg: dict) -> float:
     return base * 0.4 + has_code * 0.2 + has_error * 0.2 + length_signal * 0.2
 
 
+def _extract_key_decisions(messages: list) -> list[str]:
+    """从消息历史中提取关键决策和结论，用于摘要压缩。
+
+    Extracts key decisions and conclusions from message history for summary compaction.
+    """
+    decisions = []
+    for m in messages:
+        content = m.get("content", "")
+        role = m.get("role", "")
+        if role != "assistant":
+            continue
+        # 提取包含决策信号的句子
+        for line in content.split("\n"):
+            line = line.strip()
+            # 关键决策信号词（中英文）
+            signals = ["决定", "选择", "方案", "结论", "总结", "完成", "修复", "实现",
+                       "decided", "chose", "conclusion", "fixed", "implemented", "completed",
+                       "approach", "solution"]
+            if any(s in line.lower() for s in signals) and 20 < len(line) < 200:
+                decisions.append(line)
+    # 去重并限制数量
+    seen = set()
+    unique = []
+    for d in decisions:
+        key = d[:50]
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
+    return unique[:10]
+
+
 @mcp.tool()
 def context_compress(
     messages_json: str,
@@ -1303,14 +1334,16 @@ def context_compress(
 ) -> str:
     """Compress conversation context with importance-aware strategy. / 智能压缩对话上下文。
 
-    Enhanced with importance weighting and message-type awareness,
-    adapted from claude-code-rust's ContextCompressor + QueryPipeline 6-stage model.
+    Three strategies adapted from OpenHarness services/compact + claude-code-rust ContextCompressor:
+    - "smart":     Importance-weighted selection (keep high-signal messages)
+    - "summarize": Extract key decisions → inject as summary block (OpenHarness compact style)
+    - "simple":    Tail-truncation only (keep first + last N)
 
     Args:
         messages_json: JSON array of messages [{"role": "...", "content": "..."}]
         max_tokens: Maximum token budget
         keep_recent: Number of recent messages to always keep
-        strategy: "smart" (importance-aware) or "simple" (tail-truncation)
+        strategy: "smart" | "summarize" | "simple"
         language: "zh" (default) or "en"
     """
     is_zh = language.strip().lower() not in ("en", "english")
@@ -1345,7 +1378,39 @@ def context_compress(
     recent = messages[-keep_recent:]
     middle = messages[1:-keep_recent]
 
-    if strategy == "smart" and middle:
+    if strategy == "summarize" and middle:
+        # OpenHarness compact 风格：提取关键决策 → 注入摘要块替换中间消息
+        decisions = _extract_key_decisions(middle)
+        if is_zh:
+            summary_lines = ["[对话历史摘要 / Conversation Summary]", ""]
+            summary_lines += ["以下为已压缩的历史对话关键信息：", ""]
+            for i, d in enumerate(decisions, 1):
+                summary_lines.append(f"{i}. {d}")
+            if not decisions:
+                summary_lines.append("（历史对话已压缩，无关键决策记录）")
+            dropped_count = len(middle)
+            summary_lines += ["", f"[已压缩 {dropped_count} 条历史消息，以上为关键摘要]"]
+        else:
+            summary_lines = ["[Conversation History Summary]", ""]
+            summary_lines += ["Key decisions and conclusions from compressed history:", ""]
+            for i, d in enumerate(decisions, 1):
+                summary_lines.append(f"{i}. {d}")
+            if not decisions:
+                summary_lines.append("(History compressed, no key decisions extracted)")
+            dropped_count = len(middle)
+            summary_lines += ["", f"[{dropped_count} messages compressed above]"]
+
+        summary_msg = {
+            "role": "system",
+            "content": "\n".join(summary_lines),
+        }
+        kept = [first, summary_msg] + recent
+        new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
+        dropped = len(messages) - len(kept)
+        msg = (f"摘要压缩完成：{total} → {new_total} tokens（替换 {dropped_count} 条为摘要块）" if is_zh
+               else f"Summary compact: {total} → {new_total} tokens ({dropped_count} messages → summary block)")
+
+    elif strategy == "smart" and middle:
         scored = [(i, _msg_importance(m), m) for i, m in enumerate(middle)]
         scored.sort(key=lambda x: x[1], reverse=True)
 
@@ -1368,12 +1433,20 @@ def context_compress(
                 break
 
         kept = [first] + kept_middle + recent
+        new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
+        dropped = len(messages) - len(kept)
+        msg = (f"智能压缩完成：{total} → {new_total} tokens（丢弃 {dropped} 条低重要度消息）" if is_zh
+               else f"Smart compress: {total} → {new_total} tokens (dropped {dropped} low-importance messages)")
+
     else:
+        # simple: 只保留首条 + 最后 keep_recent 条
         kept = [first] + recent
+        new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
+        dropped = len(messages) - len(kept)
+        msg = (f"简单压缩完成：{total} → {new_total} tokens（丢弃 {dropped} 条中间消息）" if is_zh
+               else f"Simple compress: {total} → {new_total} tokens (dropped {dropped} middle messages)")
 
-    new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
-
-    # 最后兜底：如果仍超预算，截断最长的中间消息
+    # 兜底：如果仍超预算，截断中间消息
     if new_total > max_tokens:
         for m in kept[1:-keep_recent] if len(kept) > keep_recent + 1 else kept[1:]:
             content = m.get("content", "")
@@ -1383,9 +1456,6 @@ def context_compress(
                 m["content"] = content[:int(len(content) * ratio)] + "\n... [truncated]"
         new_total = sum(estimate_tokens(m.get("content", "")) for m in kept)
 
-    dropped = len(messages) - len(kept)
-    msg = (f"压缩完成：{total} → {new_total} tokens（丢弃 {dropped} 条低重要度消息）" if is_zh
-           else f"Compressed: {total} → {new_total} tokens (dropped {dropped} low-importance messages)")
     return json.dumps({
         "status": "ok",
         "message": msg,
@@ -1394,7 +1464,7 @@ def context_compress(
         "compressed_tokens": new_total,
         "original_count": len(messages),
         "compressed_count": len(kept),
-        "dropped_count": dropped,
+        "dropped_count": len(messages) - len(kept),
         "messages": kept,
     }, ensure_ascii=False, indent=2)
 
@@ -1507,16 +1577,48 @@ def editor_detect(language: str = "zh") -> str:
 from pathlib import Path as _Path
 
 
+def _parse_plugin_manifest(manifest_path: "_Path") -> dict:
+    """解析 plugin.json 清单（兼容 .claude-plugin 和 OpenHarness 格式）。
+
+    Parses plugin.json manifest compatible with .claude-plugin and OpenHarness formats.
+    """
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8", errors="replace"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    plugin_dir = manifest_path.parent
+    hooks = data.get("hooks", [])
+    mcp_file = data.get("mcp_file", "")
+    skills_dir = data.get("skills_dir", "skills")
+    commands_dir = data.get("commands_dir", "commands")
+
+    return {
+        "name": data.get("name", plugin_dir.name),
+        "version": data.get("version", ""),
+        "description": data.get("description", "")[:120],
+        "enabled_by_default": data.get("enabled_by_default", True),
+        "hooks_count": len(hooks),
+        "hook_events": list({h.get("event", "") for h in hooks if h.get("event")}),
+        "has_mcp": bool(mcp_file or (plugin_dir / ".mcp.json").exists()),
+        "has_skills": (plugin_dir / skills_dir).is_dir(),
+        "has_commands": (plugin_dir / commands_dir).is_dir(),
+        "manifest_path": str(manifest_path),
+    }
+
+
 @mcp.tool()
 def plugin_registry(
     action: str = "list",
     scan_dir: str = "",
     language: str = "zh",
 ) -> str:
-    """Scan and list available MCP servers, skills, rules, and agents. / 扫描并列出可用的插件资产。
+    """Scan and list plugins, MCP servers, skills, rules, and agents. / 扫描并列出所有插件资产。
 
-    Provides a local plugin registry by scanning project directories,
-    adapted from claude-code-rust's PluginManager + registry pattern.
+    Enhanced with OpenHarness-compatible plugin discovery:
+    - Scans .claude-plugin/plugin.json (Claude Code plugin format)
+    - Scans .openharness/plugins/ (OpenHarness plugin format)
+    - Scans project mcp-servers/, skills/, rules/, agents/
 
     Args:
         action: "list" (scan and list all) or "validate" (check for issues)
@@ -1527,6 +1629,7 @@ def plugin_registry(
     root = _Path(scan_dir).resolve() if scan_dir else _Path.cwd()
 
     registry: dict = {
+        "plugins": [],       # .claude-plugin / OpenHarness 格式插件
         "mcp_servers": [],
         "skills": [],
         "rules": [],
@@ -1534,7 +1637,35 @@ def plugin_registry(
     }
     issues: list[str] = []
 
-    # 扫描 MCP Servers
+    # ── 扫描 .claude-plugin 格式插件（OpenHarness 兼容）──────────────────────
+    plugin_search_dirs = [
+        root / ".claude-plugin",               # 项目根级插件
+        root / ".openharness" / "plugins",     # OpenHarness 风格
+        root / "plugins",                      # 通用位置
+    ]
+    # 用户目录插件（非项目级）
+    user_plugin_dir = _Path.home() / ".openharness" / "plugins"
+    if user_plugin_dir.is_dir():
+        plugin_search_dirs.append(user_plugin_dir)
+
+    for pdir in plugin_search_dirs:
+        if not pdir.is_dir():
+            continue
+        # 两种清单位置：pdir/plugin.json 或 pdir/<name>/plugin.json
+        for manifest_candidate in [
+            pdir / "plugin.json",
+            *(sub / "plugin.json" for sub in pdir.iterdir() if sub.is_dir()),
+            *(sub / ".claude-plugin" / "plugin.json" for sub in pdir.iterdir() if sub.is_dir()),
+        ]:
+            if manifest_candidate.exists():
+                info = _parse_plugin_manifest(manifest_candidate)
+                if info:
+                    info["source_dir"] = str(manifest_candidate.parent.relative_to(root)
+                                             if manifest_candidate.parent.is_relative_to(root)
+                                             else manifest_candidate.parent)
+                    registry["plugins"].append(info)
+
+    # ── 扫描 MCP Servers ──────────────────────────────────────────────────────
     for server_dir in [root / "mcp-servers", root / ".cursor" / "mcp-servers"]:
         if server_dir.is_dir():
             for child in sorted(server_dir.iterdir()):
@@ -1550,20 +1681,34 @@ def plugin_registry(
                         "prompts": prompt_count,
                     })
 
-    # 扫描 Skills
+    # ── 扫描 Skills ───────────────────────────────────────────────────────────
     for skills_dir in [root / "skills", root / ".cursor" / "skills"]:
         if skills_dir.is_dir():
             for child in sorted(skills_dir.iterdir()):
                 skill_file = child / "SKILL.md" if child.is_dir() else None
                 if skill_file and skill_file.exists():
-                    first_line = skill_file.read_text(encoding="utf-8", errors="replace").split("\n")[0]
+                    content = skill_file.read_text(encoding="utf-8", errors="replace")
+                    # 从 YAML frontmatter 提取 description
+                    desc = ""
+                    title = child.name
+                    in_front = False
+                    for line in content.split("\n"):
+                        if line.strip() == "---":
+                            in_front = not in_front
+                            continue
+                        if in_front and line.startswith("description:"):
+                            desc = line.split(":", 1)[1].strip().strip(">-").strip()
+                        if line.startswith("# "):
+                            title = line.lstrip("# ").strip()
+                            break
                     registry["skills"].append({
                         "name": child.name,
-                        "title": first_line.lstrip("# ").strip(),
+                        "title": title,
+                        "description": desc[:120],
                         "path": str(child.relative_to(root)),
                     })
 
-    # 扫描 Rules
+    # ── 扫描 Rules ────────────────────────────────────────────────────────────
     for rules_dir in [root / "rules", root / ".cursor" / "rules"]:
         if rules_dir.is_dir():
             for f in sorted(rules_dir.glob("*.mdc")):
@@ -1581,25 +1726,37 @@ def plugin_registry(
                     "path": str(f.relative_to(root)),
                 })
 
-    # 扫描 Agents
+    # ── 扫描 Agents ───────────────────────────────────────────────────────────
     for agents_dir in [root / "agents", root / ".cursor" / "agents"]:
         if agents_dir.is_dir():
             for f in sorted(agents_dir.glob("*.md")):
                 content = f.read_text(encoding="utf-8", errors="replace")
                 name = f.stem
-                desc = ""
+                desc, backend, tools_list = "", "", []
+                in_front = False
                 for line in content.split("\n"):
-                    if line.strip().startswith("description:"):
-                        desc = line.split(":", 1)[1].strip()
+                    if line.strip() == "---":
+                        in_front = not in_front
+                        continue
+                    if not in_front:
                         break
+                    if line.startswith("description:"):
+                        desc = line.split(":", 1)[1].strip().strip(">-").strip()
+                    elif line.startswith("backend_type:"):
+                        backend = line.split(":", 1)[1].strip()
+                    elif line.strip().startswith("- ") and "tools:" in "".join(
+                        content.split("\n")[:content.split("\n").index(line)][-3:]
+                    ):
+                        tools_list.append(line.strip().lstrip("- "))
                 registry["agents"].append({
                     "name": name,
                     "description": desc[:120],
+                    "backend_type": backend or "subprocess",
                     "path": str(f.relative_to(root)),
                 })
 
+    # ── 验证模式 ──────────────────────────────────────────────────────────────
     if action == "validate":
-        # 检查 mcp.json 中的服务器是否都有对应目录
         mcp_json = root / ".cursor" / "mcp.json"
         if mcp_json.exists():
             try:
@@ -1612,7 +1769,20 @@ def plugin_registry(
             except json.JSONDecodeError:
                 issues.append("mcp.json 格式错误" if is_zh else "mcp.json is malformed")
 
+        # 检查插件的 Hook 事件是否有对应的 Rule 支持
+        for plugin in registry["plugins"]:
+            for event in plugin.get("hook_events", []):
+                if event in ("PRE_TOOL_USE", "POST_TOOL_USE"):
+                    has_hook_rule = any("safety-hook" in r["name"] or "hook" in r["name"]
+                                        for r in registry["rules"])
+                    if not has_hook_rule:
+                        issues.append(
+                            f"插件 '{plugin['name']}' 使用了 {event} Hook，但未找到对应的 Hook Rule" if is_zh
+                            else f"Plugin '{plugin['name']}' uses {event} hook but no hook rule found"
+                        )
+
     summary = {
+        "plugins": len(registry["plugins"]),
         "mcp_servers": len(registry["mcp_servers"]),
         "skills": len(registry["skills"]),
         "rules": len(registry["rules"]),
@@ -1621,7 +1791,7 @@ def plugin_registry(
         "total_prompts": sum(s["prompts"] for s in registry["mcp_servers"]),
     }
 
-    title = "插件注册表" if is_zh else "Plugin Registry"
+    title = "插件注册表（OpenHarness 兼容）" if is_zh else "Plugin Registry (OpenHarness Compatible)"
     result: dict = {"title": title, "summary": summary, "registry": registry}
     if issues:
         result["issues"] = issues

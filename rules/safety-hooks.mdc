@@ -1,55 +1,138 @@
 ---
-description: "Safety hook system — auto-check dangerous operations before execution (adapted from claude-code-rust HookPoint model)"
+description: "Safety hook system — 4-type hook model with blocking support (adapted from OpenHarness HookExecutor + claude-code-rust HookPoint)"
 globs: "**/*"
 alwaysApply: true
 ---
 
-# Safety Hooks — 安全拦截系统
+# Safety Hooks — 安全拦截系统 / Safety Hook System
 
-> 借鉴 claude-code-rust 的 HookPoint 事件模型（PreToolExecution / PostToolExecution 等 20+ 事件点）
-> 和 hookify 插件的规则引擎，在 Cursor 中通过 Rule 实现"软拦截"
+> 借鉴 OpenHarness 的 `HookExecutor`（command/http/prompt/agent 四种 Hook 类型、`blocked` 阻断机制）
+> 和 claude-code-rust 的 HookPoint 事件模型，在 Cursor 中通过 Rule 实现完整的 Hook 拦截链。
+>
+> Adapted from OpenHarness `HookExecutor` (4 hook types: command/http/prompt/agent,
+> `AggregatedHookResult.blocked` mechanism) and claude-code-rust HookPoint model.
 
-## Pre-Tool Execution Checks
+---
 
-Before executing any of the following operations, you MUST call the corresponding check tool:
+## Hook 事件模型 / Hook Event Model
 
-### Shell Commands (PreToolExecution → Shell)
-Before running any shell command via the Shell tool:
-1. Call `sandbox_check` with the command to assess danger level
-2. If danger_level is "critical" or "high": **STOP and warn the user**, do not execute
-3. If danger_level is "medium": ask the user for explicit confirmation
-4. Log the decision via `audit_log` with event_type "dangerous_command"
+```
+PRE_TOOL_USE   → 工具调用前触发，可阻断执行 / Fires before tool call, can block execution
+POST_TOOL_USE  → 工具调用后触发，记录结果 / Fires after tool call, records results
+SESSION_START  → 会话开始时触发 / Fires on session start
+SESSION_END    → 会话结束时触发 / Fires on session end
+```
 
-### File Modifications (PreToolExecution → Write/StrReplace)
-Before modifying files matching sensitive patterns:
-- `.env*`, `*credentials*`, `*secret*`, `*.key`, `*.pem` → STOP and warn
-- `*.lock`, `package-lock.json`, `yarn.lock` → warn but allow with confirmation
-- Log via `audit_log` with event_type "file_operation"
+## 四种 Hook 类型 / Four Hook Types
 
-### Git Operations (PreToolExecution → Git)
-Before executing destructive git operations:
-- `git push --force`, `git reset --hard`, `git clean -fd` → STOP and warn
-- `git rebase` on main/master → require explicit confirmation
-- Log via `audit_log` with event_type "tool_call"
+```
+command  → 执行 shell 脚本（注入环境变量）/ Run shell script with injected env vars
+           payload: {tool_name, tool_input, event}
+           blocked if exit_code != 0 AND output contains "BLOCK:"
 
-## Post-Tool Execution Checks
+http     → 发送 HTTP 请求到外部服务 / Send HTTP request to external service
+           payload: JSON POST body with {tool_name, tool_input}
+           blocked if response.blocked == true
 
-After completing significant operations:
-1. Call `metrics_record` to log the tool execution time
-2. For file changes: verify with `ReadLints` that no new errors were introduced
+prompt   → 用 LLM 评估是否安全 / Use LLM to evaluate safety
+           → Call `sandbox_check` or `security_scan` as proxy
+           blocked if LLM returns danger_level "critical" or "high"
 
-## Permission Check Flow
+agent    → 派生 sub-agent 执行深度检查 / Spawn sub-agent for deep inspection
+           → Use Task(subagent_type="security-reviewer") for complex cases
+           blocked if agent returns {decision: "deny"}
+```
+
+## PRE_TOOL_USE — 执行前拦截 / Pre-Execution Interception
+
+Before executing any of the following, run the corresponding hook:
+
+### Shell Commands (PRE_TOOL_USE → command hook)
+```
+Hook chain:
+1. [command] sandbox_check(command) → danger_level
+   - "critical" | "high" → BLOCKED: stop + warn user, call audit_log(event_type="dangerous_command")
+   - "medium"            → ASK: present risk, wait for confirmation
+   - "low"               → ALLOW: proceed
+2. [command] audit_log(event_type="tool_call", action=command)
+```
+
+### File Modifications (PRE_TOOL_USE → prompt hook)
+```
+Sensitive path patterns → prompt hook (security check via sandbox_check):
+  .env*, *credentials*, *secret*, *.key, *.pem → BLOCKED
+  *.lock, package-lock.json, yarn.lock          → ASK
+  audit_log(event_type="file_operation")
+```
+
+### Git Destructive Operations (PRE_TOOL_USE → command hook)
+```
+git push --force | git reset --hard | git clean -fd → BLOCKED
+git rebase on main/master                           → ASK
+audit_log(event_type="tool_call", action="git_destructive")
+```
+
+### Security Scans (PRE_TOOL_USE → agent hook)
+```
+For changes touching auth/crypto/secrets modules:
+  → Task(subagent_type="security-reviewer", prompt="Review for injection/secrets/auth flaws")
+  blocked if security-reviewer returns Critical issues
+```
+
+## POST_TOOL_USE — 执行后检查 / Post-Execution Checks
+
+After each significant operation, run the post-hook chain:
+
+```
+1. [command] metrics_record(tool_name, duration)   → 性能记录
+2. [prompt]  ReadLints on edited files             → 质量门禁
+3. [command] audit_log(event_type="tool_call", result=summary) → 审计日志
+```
+
+## 阻断机制 / Blocking Mechanism
+
+```
+AggregatedHookResult:
+  blocked: bool     → true 时必须停止，不得继续执行工具
+  reason: str       → 向用户解释阻断原因
+  action: str       → "stop" | "ask" | "log_only"
+
+Decision flow:
+  blocked=true  → STOP: explain reason, do NOT execute tool
+  action="ask"  → PAUSE: present risk summary, wait for explicit confirmation
+  action="log"  → PROCEED: execute tool, but record in audit trail
+```
+
+## 权限检查流 / Permission Check Flow
 
 ```
 User Request → Parse Tool + Input
-  → permission_check(tool_name, tool_input)
-    → "allow" → proceed
-    → "deny"  → stop, explain why
-    → "ask"   → present risk to user, wait for confirmation
+  │
+  ├─[PRE hook]→ permission_check(tool_name, tool_input, mode)
+  │               → "allow"  → proceed to tool execution
+  │               → "deny"   → BLOCKED: stop, explain why
+  │               → "ask"    → PAUSE: present risk to user
+  │
+  ├─[tool exec]→ execute tool
+  │
+  └─[POST hook]→ metrics_record + ReadLints + audit_log
 ```
 
-## Important
+## Hook 优先级与短路 / Hook Priority & Short-Circuit
 
-- These checks are defensive, not blocking — you should always explain WHY something is risky
-- False positives are better than missed risks
-- Always log decisions for audit trail
+```
+Hook evaluation order:
+  1. always_deny rules  (highest priority — immediate block)
+  2. path/command matchers (pattern-based block or ask)
+  3. dangerous_pattern scan (regex-based ask)
+  4. always_allow rules (lowest priority — immediate pass)
+
+Short-circuit: first BLOCKED result stops the entire chain.
+```
+
+## 重要原则 / Key Principles
+
+- **阻断优先于宽容** / Block-first: false positives better than missed risks
+- **每次决策必须记录** / Audit every decision: always call `audit_log`
+- **向用户解释原因** / Always explain WHY something is blocked or risky
+- **尊重用户确认** / Respect user confirmation: once user confirms, proceed without re-asking
