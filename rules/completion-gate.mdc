@@ -1,58 +1,75 @@
 ---
-description: Requires verification before declaring any task complete
+description: "Requires verification before declaring any task complete. / 宣布任务完成前必须通过所有验证门。"
 alwaysApply: true
 ---
 
-# Completion Gate
+# Completion Gate / 完成验证门
 
-Before saying "done", you MUST have passed ALL gates below in order:
+Before saying "done", you MUST have passed ALL gates below in order.  
+说"完成"之前，必须按顺序通过以下所有验证门。
 
-## Gate 1 — Edit Verification
+## Gate 1 — Edit Verification / 编辑验证
 
 **Read back** every edited file to confirm the change is correct.  
-Verify no accidental deletions, duplicate lines, or broken indentation.
+**回读**每个编辑过的文件，确认变更正确。  
+Verify no accidental deletions, duplicate lines, or broken indentation.  
+检查无意外删除、重复行、缩进错误。
 
-## Gate 2 — Lint Check
+## Gate 2 — Lint Check / Lint 检查
 
 **Run `ReadLints`** on all edited files — zero new errors introduced.  
-If errors found: fix immediately, then re-run `ReadLints`. Do not proceed until clean.
+对所有编辑过的文件运行 `ReadLints`，不得引入新错误。  
+If errors found: fix immediately, then re-run `ReadLints`. Do not proceed until clean.  
+发现错误：立即修复，重新运行 `ReadLints`，干净后再继续。
 
-## Gate 3 — Auto Test & Fix (MANDATORY for logic changes)
+## Gate 3 — Auto Test & Fix / 自动测试与修复（逻辑变更必须执行）
 
-For any change involving functions, methods, classes, APIs, or bug fixes:
+For any change involving functions, methods, classes, APIs, or bug fixes:  
+凡涉及函数、方法、类、API 或 Bug 修复的变更：
 
-1. Call `smart_test` with the changed file to discover and run related tests:
+1. Call `smart_test` with the changed file to discover and run related tests:  
+   调用 `smart_test` 自动发现并运行相关测试：
    ```
    smart_test(file_path="<changed file>", project_dir="<project root>")
    ```
-2. **If tests pass** → proceed to Gate 4.
-3. **If tests fail** → enter fix loop (see `auto-test-fix` Skill):
-   - Read failure output carefully
-   - Fix the code (not the test) — max 3 iterations
-   - Re-run `smart_test` after each fix
-   - If still failing after 3 attempts → report to user and stop
-4. **If no tests exist** → note "no tests found" in summary and proceed.
-5. **Skip Gate 3** only for: pure docs/comments, config-only, style-only changes.
+2. **If tests pass** → proceed to Gate 4. / **测试通过** → 进入 Gate 4。
+3. **If tests fail** → enter fix loop (see `auto-test-fix` Skill):  
+   **测试失败** → 进入修复循环（参见 `auto-test-fix` Skill）：
+   - Read failure output carefully / 仔细读取失败输出
+   - Fix the code (not the test) — max 3 iterations / 修复代码（非测试），最多 3 次
+   - Re-run `smart_test` after each fix / 每次修复后重新运行 `smart_test`
+   - If still failing after 3 attempts → report to user and stop  
+     3 次后仍失败 → 向用户报告并停止
+4. **If no tests exist** → note "no tests found" in summary and proceed.  
+   **无测试文件** → 在摘要中注明"无测试"后继续。
+5. **Skip Gate 3** only for: pure docs/comments, config-only, style-only changes.  
+   仅以下情况可跳过 Gate 3：纯文档注释、纯配置、纯样式变更。
 
-## Gate 4 — Requirements Validation
+## Gate 4 — Requirements Validation / 需求验证
 
-**Compare result to request** — does the change actually accomplish what was asked?
-- [ ] Correct behavior implemented?
-- [ ] Edge cases handled?
-- [ ] Code style consistent with codebase?
+**Compare result to request** — does the change actually accomplish what was asked?  
+对照原始请求，确认变更真正实现了所要求的内容：
+- [ ] Correct behavior implemented? / 行为是否正确实现？
+- [ ] Edge cases handled? / 边界情况是否处理？
+- [ ] Code style consistent with codebase? / 代码风格是否与代码库一致？
 
-If any gate fails, fix the issue and re-verify. Do not skip gates.
+If any gate fails, fix the issue and re-verify. Do not skip gates.  
+任何门验证失败，修复后重新验证，不得跳过。
 
 ---
 
-## Memory extraction (post-completion)
+## Memory Extraction (post-completion) / 记忆提取（完成后）
 
-After passing all gates, consider whether to persist knowledge:
+After passing all gates, consider whether to persist knowledge:  
+通过所有验证门后，考虑是否需要持久化知识：
 
-5. **Save decisions** — If the task involved non-obvious decisions (architecture choices, tricky workarounds, discovered gotchas), use `memory_save` to persist them for future sessions.
-6. **Team knowledge** — If the decision applies to all team members (coding conventions, API contracts, known pitfalls), use `team_memory_save` instead.
+5. **Save decisions** — Non-obvious decisions (architecture, tricky workarounds, gotchas) → use `memory_save`.  
+   **保存决策** — 非显而易见的决策（架构选择、技巧绕过、已知陷阱）→ 用 `memory_save`。
+6. **Team knowledge** — Decisions applicable to all team members → use `team_memory_save`.  
+   **团队知识** — 适用于所有团队成员的知识 → 用 `team_memory_save`。
 
-This is not mandatory for trivial tasks, but important decisions SHOULD be recorded.
+This is not mandatory for trivial tasks, but important decisions SHOULD be recorded.  
+简单任务不强制，但重要决策**应当**记录。
 
 ## Summary format
 

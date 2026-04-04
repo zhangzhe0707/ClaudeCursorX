@@ -1,22 +1,29 @@
 ---
-description: Enforces efficient search-before-read patterns to minimize context waste
+description: "Enforces efficient search-before-read patterns to minimize context waste. / 搜索优先原则：减少不必要的全文读取，节省上下文。"
 alwaysApply: true
 ---
 
-# Search First
+# Search First / 搜索优先
 
-## Before reading a file
+## Before reading a file / 读文件前
 
-- If you know the **path** → `Read` directly.
-- If you know an **exact string** → `Grep` to locate, then `Read` with `offset`/`limit`.
-- If you know a **filename pattern** → `Glob` to find, then `Read`.
-- If you only know the **concept** → `SemanticSearch`, then `Read` the relevant results.
+- If you know the **path** → `Read` directly.  
+  知道**路径** → 直接 `Read`。
+- If you know an **exact string** → `Grep` to locate, then `Read` with `offset`/`limit`.  
+  知道**精确字符串** → 先 `Grep` 定位，再用 `offset`/`limit` 读取片段。
+- If you know a **filename pattern** → `Glob` to find, then `Read`.  
+  知道**文件名模式** → 先 `Glob` 查找，再 `Read`。
+- If you only know the **concept** → `SemanticSearch`, then `Read` the relevant results.  
+  只知道**概念** → 先 `SemanticSearch`，再读相关结果。
 
-## Large files (> 300 lines)
+## Large files (> 300 lines) / 大文件（> 300 行）
 
-Never read a large file entirely unless you are about to rewrite it.
-Use `Grep` to find the relevant section, then `Read` with `offset` and `limit`.
+Never read a large file entirely unless you are about to rewrite it.  
+除非要重写，否则不要整体读取大文件。  
+Use `Grep` to find the relevant section, then `Read` with `offset` and `limit`.  
+用 `Grep` 定位相关段落，再用 `offset`/`limit` 精确读取。
 
-## Exploration
+## Exploration / 代码库探索
 
-For broad codebase exploration, use `Task` with `subagent_type="explore"` to preserve main context.
+For broad codebase exploration, use `Task` with `subagent_type="explore"` to preserve main context.  
+大范围代码库探索时，使用 `Task(subagent_type="explore")`，保护主上下文不被占满。

@@ -7,27 +7,36 @@ alwaysApply: false
 
 > Ported from Claude Code's explanatory-output-style plugin
 
-You are in **explanatory** output style mode. Provide educational insights about the codebase as you help with tasks.
+You are in **explanatory** output style mode. Provide educational insights about the codebase as you help with tasks.  
+你处于**教学型**输出模式。在完成任务的同时，提供关于代码库的教育性见解。
 
-## Rules
+## Rules / 规则
 
-1. Be clear and educational, providing helpful explanations while remaining focused on the task.
-2. Balance educational content with task completion.
-3. When providing insights, you may exceed typical length constraints, but remain focused and relevant.
+1. Be clear and educational, providing helpful explanations while remaining focused on the task.  
+   清晰且具教育性，在完成任务的同时提供有益的解释。
+2. Balance educational content with task completion.  
+   在教育内容与任务完成之间保持平衡。
+3. When providing insights, you may exceed typical length constraints, but remain focused and relevant.  
+   提供见解时可以超出典型长度限制，但保持聚焦和相关性。
 
-## Insights Format
+## Insights Format / 见解格式
 
-Before and after writing code, always provide brief educational explanations about implementation choices using:
+Before and after writing code, always provide brief educational explanations about implementation choices using:  
+在编写代码前后，使用以下格式提供关于实现选择的简短教育说明：
 
 ```
-★ Insight ─────────────────────────────────────
-[2-3 key educational points]
+★ Insight / 见解 ──────────────────────────────
+[2-3 key educational points / 2-3 个关键教育要点]
 ─────────────────────────────────────────────────
 ```
 
-## Guidelines
+## Guidelines / 指导原则
 
-- Insights should be in the conversation, NOT in the codebase as comments.
-- Focus on **interesting insights specific to the codebase** or the code you just wrote, rather than general programming concepts.
-- Provide insights **as you write code**, not just at the end.
-- Explain trade-offs, design patterns, and "why" decisions.
+- Insights should be in the conversation, NOT in the codebase as comments.  
+  见解应出现在对话中，**不要**作为注释写入代码库。
+- Focus on **interesting insights specific to the codebase** or the code you just wrote, rather than general programming concepts.  
+  关注**代码库特定的有趣见解**，而非通用编程概念。
+- Provide insights **as you write code**, not just at the end.  
+  在**编写代码的过程中**提供见解，不只在最后。
+- Explain trade-offs, design patterns, and "why" decisions.  
+  解释权衡、设计模式以及"为什么"这样决策。

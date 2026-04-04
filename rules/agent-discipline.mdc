@@ -1,26 +1,41 @@
 ---
-description: Enforces agent loop discipline — read before edit, verify after edit, never skip linting
+description: "Enforces agent loop discipline — read before edit, verify after edit, never skip linting. / Agent 操作纪律：先读后写、改后验证、禁止盲改。"
 alwaysApply: true
 ---
 
-# Agent Loop Discipline
+# Agent Loop Discipline / Agent 操作纪律
 
-## Hard Rules (never violate)
+## Hard Rules (never violate) / 硬性规则（不得违反）
 
-1. **Read before edit** — Always `Read` a file before using `StrReplace` on it. No exceptions.
-2. **Verify after edit** — Run `ReadLints` on every file you modify. Fix new errors before proceeding.
-3. **One step at a time** — For write operations, complete and verify one change before starting the next.
-4. **No blind bulk edits** — Never modify files you haven't read in this session.
-5. **Fail fast** — If the same error recurs 3 times, stop and explain the blocker to the user.
+1. **Read before edit** — Always `Read` a file before using `StrReplace` on it. No exceptions.  
+   **先读后写** — 使用 `StrReplace` 前必须先 `Read` 目标文件，无例外。
 
-## Parallel Batching
+2. **Verify after edit** — Run `ReadLints` on every file you modify. Fix new errors before proceeding.  
+   **改后验证** — 每次修改文件后运行 `ReadLints`，发现新错误立即修复。
 
-- Batch multiple `Read`, `Grep`, `Glob`, `SemanticSearch` calls in a single message.
-- Never batch two `StrReplace` calls on the **same file**.
-- Independent writes to **different files** may be batched.
+3. **One step at a time** — For write operations, complete and verify one change before starting the next.  
+   **单步推进** — 写操作必须完成并验证当前步骤，再开始下一步。
 
-## Tool Prohibition
+4. **No blind bulk edits** — Never modify files you haven't read in this session.  
+   **禁止盲改** — 不得修改本会话中未读取过的文件。
 
-- Never use `cat`, `head`, `tail` in Shell to read files — use `Read`.
-- Never use `sed`, `awk` in Shell to edit files — use `StrReplace`.
-- Never use `find`, `grep` in Shell to search — use `Glob`, `Grep`.
+5. **Fail fast** — If the same error recurs 3 times, stop and explain the blocker to the user.  
+   **快速失败** — 同一错误出现 3 次，停止并向用户说明阻塞原因。
+
+## Parallel Batching / 并行批处理
+
+- Batch multiple `Read`, `Grep`, `Glob`, `SemanticSearch` calls in a single message.  
+  将多个 `Read`/`Grep`/`Glob`/`SemanticSearch` 合并到同一消息中并行执行。
+- Never batch two `StrReplace` calls on the **same file**.  
+  同一文件的两次 `StrReplace` 不得并行。
+- Independent writes to **different files** may be batched.  
+  写入**不同文件**的独立操作可以批处理。
+
+## Tool Prohibition / 工具禁令
+
+- Never use `cat`, `head`, `tail` in Shell to read files — use `Read`.  
+  禁止用 `cat`/`head`/`tail` 读文件，使用 `Read` 工具。
+- Never use `sed`, `awk` in Shell to edit files — use `StrReplace`.  
+  禁止用 `sed`/`awk` 编辑文件，使用 `StrReplace` 工具。
+- Never use `find`, `grep` in Shell to search — use `Glob`, `Grep`.  
+  禁止用 `find`/`grep` 搜索，使用 `Glob`/`Grep` 工具。

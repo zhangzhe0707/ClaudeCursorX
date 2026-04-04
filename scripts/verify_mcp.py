@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-MCP Server 功能验证脚本
+MCP Server Verification Script / MCP Server 功能验证脚本
 
-验证策略（分三层）：
-  1. 语法层  — python -m py_compile，确保无语法错误
-  2. 协议层  — MCP initialize + tools/list 握手，确认工具注册正确
-  3. 功能层  — 直接 import + 调用工具函数，验证核心逻辑（绕过协议层竞争条件）
+Validation strategy (3 layers) / 验证策略（分三层）:
+  1. Syntax layer  — python -m py_compile / 语法层 — 确保无语法错误
+  2. Protocol layer — MCP initialize + tools/list handshake / 协议层 — 确认工具注册正确
+  3. Function layer — direct import + call / 功能层 — 直接调用工具函数
 
-用法:
-    python scripts/verify_mcp.py               # 验证所有服务器
-    python scripts/verify_mcp.py agent-tools   # 只验证指定服务器
+Usage / 用法:
+    python scripts/verify_mcp.py                    # all servers / 验证所有服务器
+    python scripts/verify_mcp.py agent-tools        # specific server / 验证指定服务器
+    python scripts/verify_mcp.py --lang en          # English output / 英文输出
+    python scripts/verify_mcp.py --lang zh          # Chinese output (default) / 中文输出（默认）
+    python scripts/verify_mcp.py agent-tools --lang en
 """
 
 from __future__ import annotations
@@ -23,6 +26,91 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
 SERVERS_DIR = ROOT / "mcp-servers"
+
+# ─── 国际化 / i18n ──────────────────────────────────────────────────────────
+
+_LANG = "zh"  # 由 main() 根据 --lang 参数设置
+
+_STRINGS: dict[str, dict[str, str]] = {
+    "title": {
+        "zh": "ClaudeCursorX MCP Server 验证",
+        "en": "ClaudeCursorX MCP Server Verification",
+    },
+    "root": {
+        "zh": "项目根目录",
+        "en": "Project root",
+    },
+    "syntax_ok": {
+        "zh": "语法",
+        "en": "Syntax",
+    },
+    "protocol": {
+        "zh": "协议",
+        "en": "Protocol",
+    },
+    "declared": {
+        "zh": "声明 {n} 个 @mcp.tool()，协议返回 {m} 个",
+        "en": "Declared {n} @mcp.tool(), protocol returned {m}",
+    },
+    "protocol_failed": {
+        "zh": "工具列表获取失败（声明 {n} 个）",
+        "en": "Failed to get tool list (declared {n})",
+    },
+    "skip": {
+        "zh": "跳过 {name}：找不到 {path}",
+        "en": "Skip {name}: {path} not found",
+    },
+    "no_server": {
+        "zh": "没有找到要测试的服务器",
+        "en": "No servers found to test",
+    },
+    "summary_title": {
+        "zh": "汇总结果",
+        "en": "Summary",
+    },
+    "all_pass": {
+        "zh": "✓ 全部通过",
+        "en": "✓ All passed",
+    },
+    "n_fail": {
+        "zh": "✗ {n} 个失败",
+        "en": "✗ {n} failed",
+    },
+    "pass_count": {
+        "zh": "通过",
+        "en": "passed",
+    },
+    "expect_key": {
+        "zh": "期望含 '{key}'，实际",
+        "en": "Expected key '{key}', got",
+    },
+    "tool_error": {
+        "zh": "工具错误",
+        "en": "Tool error",
+    },
+    "parse_error": {
+        "zh": "无法解析输出",
+        "en": "Cannot parse output",
+    },
+    "proc_error": {
+        "zh": "进程异常",
+        "en": "Process error",
+    },
+    "timeout": {
+        "zh": "超时",
+        "en": "Timeout",
+    },
+    "servers_count": {
+        "zh": "{n} 个服务器",
+        "en": "{n} servers",
+    },
+}
+
+
+def _T(key: str, **kwargs: object) -> str:
+    """获取当前语言的翻译字符串。"""
+    tmpl = _STRINGS.get(key, {}).get(_LANG, _STRINGS.get(key, {}).get("zh", key))
+    return tmpl.format(**kwargs) if kwargs else tmpl
 
 # (tool_name, arguments_dict, 期望结果中包含的 key 或 substring)
 SMOKE_TESTS: dict[str, list[tuple[str, dict, str]]] = {
@@ -180,7 +268,7 @@ def call_tool_direct(server_py: Path, tool_name: str, arguments: dict, timeout: 
 
     if proc.returncode != 0:
         err = proc.stderr.strip()[-300:]
-        return False, f"进程异常: {err}"
+        return False, f"{_T('proc_error')}: {err}"
 
     for line in proc.stdout.splitlines():
         line = line.strip()
@@ -190,12 +278,11 @@ def call_tool_direct(server_py: Path, tool_name: str, arguments: dict, timeout: 
             wrapper = json.loads(line)
             if "result" in wrapper:
                 raw = wrapper["result"]
-                # 工具返回值可能是 JSON 字符串，也可能是 dict
                 if isinstance(raw, str):
                     try:
                         inner = json.loads(raw)
                         if isinstance(inner, dict) and "error" in inner:
-                            return False, f"工具错误: {inner['error']}"
+                            return False, f"{_T('tool_error')}: {inner['error']}"
                         summary = json.dumps(inner, ensure_ascii=False)
                     except json.JSONDecodeError:
                         summary = raw
@@ -206,7 +293,7 @@ def call_tool_direct(server_py: Path, tool_name: str, arguments: dict, timeout: 
             pass
 
     stdout_snippet = proc.stdout.strip()[:200]
-    return False, f"无法解析输出: {stdout_snippet!r}"
+    return False, f"{_T('parse_error')}: {stdout_snippet!r}"
 
 
 # ─── 主验证流程 ────────────────────────────────────────────────────────────────
@@ -218,36 +305,35 @@ def verify_server(name: str, server_py: Path, tests: list[tuple[str, dict, str]]
 
     result = {"server": name, "pass": 0, "fail": 0}
 
-    # Layer 1: 语法
+    # Layer 1: Syntax / 语法
     ok, msg = check_syntax(server_py)
-    print(f"  {PASS if ok else FAIL} [语法]  {msg}")
+    print(f"  {PASS if ok else FAIL} [{_T('syntax_ok')}]  {msg}")
     if not ok:
         result["fail"] += len(tests)
         return result
 
-    # Layer 2: 工具列表（协议层）
+    # Layer 2: Protocol tool list / 协议工具列表
     declared = server_py.read_text(encoding="utf-8").count("@mcp.tool()")
     tools = list_tools_via_protocol(server_py)
     if tools is not None:
         icon = "✓" if len(tools) >= declared - 2 else "⚠"
-        print(f"  {icon} [协议]  声明 {declared} 个 @mcp.tool()，协议返回 {len(tools)} 个")
+        print(f"  {icon} [{_T('protocol')}]  {_T('declared', n=declared, m=len(tools))}")
         if tools:
             print(f"           └─ {', '.join(tools)}")
     else:
-        print(f"  {WARN} [协议]  工具列表获取失败（声明 {declared} 个）")
+        print(f"  {WARN} [{_T('protocol')}]  {_T('protocol_failed', n=declared)}")
 
     print()
 
-    # Layer 3: 功能调用
+    # Layer 3: Function calls / 功能调用
     for tool_name, args, expect in tests:
         t0 = time.time()
-        ok, summary = call_tool_direct(server_py, tool_name, args)
+        ok, summary = call_tool_direct(server_py, tool_name, args, timeout=35)
         elapsed = time.time() - t0
 
-        # 可选：验证期望关键字
         if ok and expect and expect not in summary:
             ok = False
-            summary = f"期望含 '{expect}'，实际: {summary[:120]}"
+            summary = f"{_T('expect_key', key=expect)}: {summary[:120]}"
 
         status = PASS if ok else FAIL
         print(f"  {status} {tool_name:<34} ({elapsed:.1f}s)")
@@ -261,25 +347,50 @@ def verify_server(name: str, server_py: Path, tests: list[tuple[str, dict, str]]
 
 
 def main():
-    target = sys.argv[1] if len(sys.argv) > 1 else None
-    all_results = []
+    global _LANG
 
+    # 解析参数：[server_name] [--lang zh|en]
+    args = sys.argv[1:]
+    target: str | None = None
+    consumed: set[int] = set()
+
+    for i, arg in enumerate(args):
+        if arg == "--lang" and i not in consumed:
+            consumed.add(i)
+            if i + 1 < len(args):
+                _LANG = args[i + 1].lower()
+                consumed.add(i + 1)
+        elif arg.startswith("--lang="):
+            consumed.add(i)
+            _LANG = arg.split("=", 1)[1].lower()
+
+    for i, arg in enumerate(args):
+        if i not in consumed and not arg.startswith("--"):
+            target = arg
+            break
+
+    if _LANG not in ("zh", "en"):
+        _LANG = "zh"
+
+    all_results: list[dict] = []
     servers_to_test: dict[str, tuple[Path, list]] = {}
+
     for name, tests in SMOKE_TESTS.items():
         if target and target != name:
             continue
         server_py = SERVERS_DIR / name / "server.py"
         if not server_py.exists():
-            print(f"{WARN} 跳过 {name}：找不到 {server_py}")
+            print(f"{WARN} {_T('skip', name=name, path=server_py)}")
             continue
         servers_to_test[name] = (server_py, tests)
 
     if not servers_to_test:
-        print(f"没有找到要测试的服务器（target={target}）")
+        print(f"{_T('no_server')} (target={target})")
         sys.exit(1)
 
-    print(f"\nClaudeCursorX MCP Server 验证  ({len(servers_to_test)} 个服务器)")
-    print(f"项目根目录: {ROOT}")
+    count_str = _T("servers_count", n=len(servers_to_test))
+    print(f"\n{_T('title')}  ({count_str})")
+    print(f"{_T('root')}: {ROOT}")
 
     for name, (server_py, tests) in servers_to_test.items():
         r = verify_server(name, server_py, tests)
@@ -289,13 +400,15 @@ def main():
     total_fail = sum(r["fail"] for r in all_results)
     total = total_pass + total_fail
 
+    status_str = _T("all_pass") if total_fail == 0 else _T("n_fail", n=total_fail)
+    pass_label = _T("pass_count")
+
     print(f"\n{'='*64}")
-    print(f"  汇总结果: {total_pass}/{total} 通过  "
-          f"{'✓ 全部通过' if total_fail == 0 else f'✗ {total_fail} 个失败'}")
+    print(f"  {_T('summary_title')}: {total_pass}/{total}  {status_str}")
     print(f"{'='*64}")
     for r in all_results:
         icon = "✓" if r["fail"] == 0 else "✗"
-        print(f"  {icon} {r['server']:<24} {r['pass']}/{r['pass']+r['fail']} 通过")
+        print(f"  {icon} {r['server']:<24} {r['pass']}/{r['pass']+r['fail']} {pass_label}")
 
     sys.exit(0 if total_fail == 0 else 1)
 
