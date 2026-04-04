@@ -791,5 +791,143 @@ def prompt_suggestion(
     }, ensure_ascii=False, indent=2)
 
 
+# ─── security_scan（移植自 Claude Code security-guidance 插件） ──────────────
+
+SECURITY_RULES = [
+    {
+        "id": "github_actions_injection",
+        "path_pattern": ".github/workflows/",
+        "path_ext": (".yml", ".yaml"),
+        "severity": "high",
+        "message_zh": "GitHub Actions 工作流注入风险：不要在 run: 中直接使用不可信输入（issue title、PR body 等），应通过 env: 传递并加引号。",
+        "message_en": "GitHub Actions workflow injection risk: Never use untrusted input directly in run: commands. Use env: with proper quoting instead.",
+    },
+    {
+        "id": "command_injection",
+        "substrings": ["child_process.exec", "exec(", "execSync(", "os.system", "subprocess.call(", "subprocess.run("],
+        "severity": "high",
+        "message_zh": "命令注入风险：使用 execFile/subprocess.run([...]) 代替 exec/os.system，避免 shell 注入。",
+        "message_en": "Command injection risk: Use execFile/subprocess.run([...]) instead of exec/os.system to prevent shell injection.",
+    },
+    {
+        "id": "eval_injection",
+        "substrings": ["eval(", "new Function("],
+        "severity": "high",
+        "message_zh": "代码注入风险：eval() / new Function() 可执行任意代码。考虑 JSON.parse() 或其他安全替代方案。",
+        "message_en": "Code injection risk: eval() / new Function() can execute arbitrary code. Consider JSON.parse() or safer alternatives.",
+    },
+    {
+        "id": "xss_risk",
+        "substrings": ["dangerouslySetInnerHTML", ".innerHTML =", ".innerHTML=", "document.write"],
+        "severity": "high",
+        "message_zh": "XSS 风险：使用 textContent 或 DOMPurify 清理 HTML，避免直接设置 innerHTML / document.write。",
+        "message_en": "XSS risk: Use textContent or DOMPurify to sanitize HTML. Avoid setting innerHTML / document.write directly.",
+    },
+    {
+        "id": "unsafe_deserialization",
+        "substrings": ["pickle.load", "pickle.loads", "yaml.load(", "marshal.load"],
+        "severity": "high",
+        "message_zh": "不安全反序列化：pickle/yaml.load/marshal 可导致任意代码执行。使用 json 或 yaml.safe_load。",
+        "message_en": "Unsafe deserialization: pickle/yaml.load/marshal can lead to arbitrary code execution. Use json or yaml.safe_load.",
+    },
+    {
+        "id": "hardcoded_secret",
+        "substrings": ["password =", "passwd =", "api_key =", "apikey =", "secret =", "token =", "AWS_SECRET", "PRIVATE_KEY"],
+        "severity": "medium",
+        "message_zh": "疑似硬编码密钥：密码、API Key、Token 等不应出现在代码中，应使用环境变量或密钥管理服务。",
+        "message_en": "Possible hardcoded secret: Passwords, API keys, tokens should not be in code. Use environment variables or secret management.",
+    },
+    {
+        "id": "sql_injection",
+        "substrings": ["f\"SELECT", "f'SELECT", '+ "SELECT', "+ 'SELECT", ".format(", "% ("],
+        "severity": "high",
+        "message_zh": "SQL 注入风险：使用参数化查询代替字符串拼接 SQL。",
+        "message_en": "SQL injection risk: Use parameterized queries instead of string concatenation for SQL.",
+    },
+    {
+        "id": "weak_crypto",
+        "substrings": ["hashlib.md5", "hashlib.sha1", "MD5(", "SHA1("],
+        "severity": "medium",
+        "message_zh": "弱加密算法：MD5/SHA1 不应用于安全场景，使用 SHA-256 或 bcrypt。",
+        "message_en": "Weak cryptography: MD5/SHA1 should not be used for security. Use SHA-256 or bcrypt.",
+    },
+]
+
+
+@mcp.tool()
+def security_scan(file_path: str, content: str = "", language: str = "zh") -> str:
+    """扫描文件内容中的安全风险模式。/ Scan file content for security risk patterns.
+
+    基于 Claude Code security-guidance 插件的检测规则，覆盖命令注入、XSS、
+    SQL 注入、不安全反序列化、硬编码密钥、弱加密等常见漏洞模式。
+
+    Args:
+        file_path: 要扫描的文件路径
+        content: 文件内容（留空则自动读取文件）
+        language: 输出语言 "zh"（默认）或 "en"
+    """
+    is_zh = language.strip().lower() not in ("en", "english")
+    findings = []
+    target_path = os.path.abspath(file_path)
+
+    if not content:
+        try:
+            with open(target_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except FileNotFoundError:
+            return json.dumps({"error": f"文件不存在: {file_path}" if is_zh else f"File not found: {file_path}"})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    normalized_path = file_path.lstrip("/")
+
+    for rule in SECURITY_RULES:
+        matched = False
+        # 路径匹配
+        if "path_pattern" in rule:
+            if rule["path_pattern"] in normalized_path:
+                if "path_ext" in rule:
+                    matched = any(normalized_path.endswith(ext) for ext in rule["path_ext"])
+                else:
+                    matched = True
+        # 内容子串匹配
+        if not matched and "substrings" in rule:
+            for substr in rule["substrings"]:
+                if substr in content:
+                    # 找到匹配行号
+                    for i, line in enumerate(content.split("\n"), 1):
+                        if substr in line:
+                            findings.append({
+                                "rule": rule["id"],
+                                "severity": rule["severity"],
+                                "line": i,
+                                "match": substr,
+                                "message": rule["message_zh"] if is_zh else rule["message_en"],
+                            })
+                    matched = True
+                    break
+        # 路径匹配但无行号
+        if matched and "path_pattern" in rule and not any(f["rule"] == rule["id"] for f in findings):
+            findings.append({
+                "rule": rule["id"],
+                "severity": rule["severity"],
+                "line": 0,
+                "match": normalized_path,
+                "message": rule["message_zh"] if is_zh else rule["message_en"],
+            })
+
+    high_count = sum(1 for f in findings if f["severity"] == "high")
+    medium_count = sum(1 for f in findings if f["severity"] == "medium")
+    summary = (f"发现 {len(findings)} 个安全风险（🔴 高危 {high_count} / 🟡 中危 {medium_count}）" if is_zh
+               else f"Found {len(findings)} security issues (🔴 high {high_count} / 🟡 medium {medium_count})")
+
+    return json.dumps({
+        "file": file_path,
+        "total": len(findings),
+        "summary": summary,
+        "findings": findings,
+    }, ensure_ascii=False, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

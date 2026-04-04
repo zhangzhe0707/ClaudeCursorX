@@ -684,5 +684,114 @@ def branch_status(project_dir: str = ".", fetch_first: bool = True) -> str:
     }, ensure_ascii=False, indent=2)
 
 
+# ─── MCP Prompts（移植自 Claude Code commit-commands 插件） ────────────────────
+
+@mcp.prompt()
+def quick_commit(language: str = "zh") -> str:
+    """Create a git commit based on current changes. / 基于当前变更创建 git commit。
+
+    Args:
+        language: "zh" (default) or "en"
+    """
+    if language.strip().lower() not in ("en", "english"):
+        return """请基于当前变更创建一个 git commit。
+
+执行步骤：
+1. 运行 `git status` 查看所有变更
+2. 运行 `git diff HEAD` 查看具体差异
+3. 运行 `git log --oneline -5` 参考最近的提交风格
+4. 将相关文件加入暂存区（`git add`）
+5. 用简洁有意义的提交信息提交（`git commit`）
+
+提交信息规范：
+- 第一行简短概括（不超过 50 字符），使用动词开头（如 feat/fix/docs/chore）
+- 如有必要，空一行后写详细说明
+- 参考项目已有的 commit 风格"""
+    else:
+        return """Please create a git commit based on current changes.
+
+Steps:
+1. Run `git status` to see all changes
+2. Run `git diff HEAD` to see specific diffs
+3. Run `git log --oneline -5` to reference recent commit style
+4. Stage relevant files (`git add`)
+5. Commit with a concise, meaningful message (`git commit`)
+
+Commit message conventions:
+- First line: short summary (<=50 chars), start with verb (feat/fix/docs/chore)
+- If needed, add a blank line then detailed description
+- Follow the project's existing commit style"""
+
+
+@mcp.prompt()
+def commit_push_pr(language: str = "zh") -> str:
+    """Commit, push, and create a PR in one go. / 一键提交、推送并创建 PR。
+
+    Args:
+        language: "zh" (default) or "en"
+    """
+    if language.strip().lower() not in ("en", "english"):
+        return """请完成以下完整的 Git 工作流：
+
+1. **检查状态**：运行 `git status` 和 `git diff HEAD`
+2. **创建分支**：如果在 main/master 上，先创建新的功能分支
+3. **提交变更**：暂存并提交所有相关变更
+4. **推送分支**：`git push -u origin <branch>`
+5. **创建 PR**：使用 `gh pr create` 创建 Pull Request
+
+注意事项：
+- 分支命名：feature/<功能名> 或 fix/<问题名>
+- PR 标题应简洁描述变更目的
+- PR 描述应包含变更摘要和测试计划
+- 确保不提交敏感文件（.env、credentials 等）"""
+    else:
+        return """Please complete the following Git workflow:
+
+1. **Check status**: Run `git status` and `git diff HEAD`
+2. **Create branch**: If on main/master, create a new feature branch first
+3. **Commit changes**: Stage and commit all relevant changes
+4. **Push branch**: `git push -u origin <branch>`
+5. **Create PR**: Use `gh pr create` to create a Pull Request
+
+Notes:
+- Branch naming: feature/<name> or fix/<issue>
+- PR title should concisely describe the change
+- PR description should include summary and test plan
+- Ensure no sensitive files are committed (.env, credentials, etc.)"""
+
+
+@mcp.prompt()
+def clean_gone_branches(language: str = "zh") -> str:
+    """Clean up local branches deleted from remote. / 清理远程已删除的本地分支。
+
+    Args:
+        language: "zh" (default) or "en"
+    """
+    if language.strip().lower() not in ("en", "english"):
+        return """请清理所有标记为 [gone] 的本地分支（远程已删除但本地仍存在的分支）。
+
+执行步骤：
+1. 运行 `git branch -v` 列出所有分支及状态
+2. 运行 `git worktree list` 检查关联的 worktree
+3. 对每个标记为 [gone] 的分支：
+   - 如有关联 worktree，先 `git worktree remove --force` 移除
+   - 然后 `git branch -D` 删除分支
+4. 汇报清理结果
+
+注意：不要删除当前所在的分支。如果没有 [gone] 分支，报告无需清理。"""
+    else:
+        return """Please clean up all local branches marked as [gone] (deleted from remote but still exist locally).
+
+Steps:
+1. Run `git branch -v` to list all branches with status
+2. Run `git worktree list` to check associated worktrees
+3. For each branch marked [gone]:
+   - If it has a worktree, remove it with `git worktree remove --force`
+   - Then delete the branch with `git branch -D`
+4. Report cleanup results
+
+Note: Do not delete the currently checked-out branch. If no [gone] branches exist, report that no cleanup was needed."""
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")
