@@ -1,0 +1,92 @@
+---
+description: "Auto-trigger tests and enter a fix loop after completing any code change that affects logic or APIs. / 编码完成后自动触发测试，失败时进入自动修复循环。"
+alwaysApply: true
+---
+
+# Auto Test & Fix — 编码后自动测试与修复
+
+> 每次完成具有逻辑意义的代码变更后，必须自动触发测试并在失败时修复，
+> 而不是等用户手动要求。这是将 Claude Code 的 PostToolUse Hook 行为
+> 移植到 Cursor 的核心机制。
+
+## 触发条件（满足任一即触发）
+
+代码变更涉及以下内容时**必须**执行本规则：
+
+- 新增或修改函数 / 方法 / 类的实现体
+- 修复 Bug（任何逻辑性改动）
+- 重构（函数拆分、逻辑迁移、参数变更）
+- 新增 MCP 工具或 Skill 逻辑
+- API 接口变更
+
+**跳过条件**（以下变更不触发）：
+
+- 仅修改注释、文档、README
+- 仅修改配置文件（.json, .yaml, .toml 等）
+- 仅修改样式文件（.css, .scss）
+
+---
+
+## 执行流程
+
+### Step 1 — 调用 smart_test 发现并运行测试
+
+```
+smart_test(file_path="<刚修改的文件>", project_dir="<项目根>")
+```
+
+- 它会自动：检测测试框架 → 推断对应测试文件 → 构建命令 → 执行 → 解析结果
+- 如果找不到测试文件 → 跳到 Step 4，在摘要中注明"无测试"
+
+### Step 2 — 分析结果
+
+| 结果 | 行动 |
+|------|------|
+| 全部通过 | 直接进入 Step 4，标注 "Tests ✓" |
+| 有失败 | 进入 Step 3 Fix Loop |
+| 超时 / 环境错误 | 记录原因，在摘要中说明，**不阻塞完成** |
+
+### Step 3 — Fix Loop（最多 3 次迭代）
+
+```
+iteration = 0
+while iteration < 3:
+    1. 仔细读取失败输出（错误信息、堆栈、断言失败行）
+    2. 定位根因：
+       - 是我刚才的改动导致的？→ 修复代码
+       - 是预存的已知失败？→ 注明，不修改测试
+       - 是测试本身写错了？→ 解释给用户，等待确认再改测试
+    3. StrReplace 修复（修改最小范围）
+    4. 读回修改文件确认（ReadLints）
+    5. 重新运行 smart_test
+    iteration += 1
+    if all_passed: break
+```
+
+**超过 3 次仍失败时**：
+- 停止修复循环
+- 在摘要中如实描述：失败原因、已尝试的修复、建议的下一步
+- **不要隐藏失败**
+
+### Step 4 — 记录结果
+
+完成后在摘要中输出：
+
+```
+**Tests:** ✓ N passed  /  ✗ N failed (reason)  /  ⚠ N/A (no tests found)
+```
+
+---
+
+## 与其他规则的协作
+
+- `completion-gate.mdc`：本规则负责**执行**测试，completion-gate 负责**把关门槛**
+- `safety-hooks.mdc`：先做 sandbox_check 安全检查，再运行测试
+- `agent-discipline.mdc`：Fix Loop 中的每次修改都遵守"读后写"原则
+
+## 重要约束
+
+1. **修代码，不修测试**（除非测试本身有错并告知用户）
+2. **不要为了让测试通过而降低测试标准**
+3. **最多 3 次**修复尝试，防止无限循环
+4. **透明上报**：不能因为测试失败就隐瞒，必须在摘要中说明

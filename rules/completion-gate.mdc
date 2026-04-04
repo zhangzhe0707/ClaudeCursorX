@@ -5,14 +5,45 @@ alwaysApply: true
 
 # Completion Gate
 
-Before saying "done", you MUST have:
+Before saying "done", you MUST have passed ALL gates below in order:
 
-1. **Read back** every edited file to confirm the change is correct.
-2. **Run `ReadLints`** on all edited files — zero new errors introduced.
-3. **Run tests** if they exist for the changed code (`Shell` with relevant test command).
-4. **Compared result to request** — does the change actually accomplish what was asked?
+## Gate 1 — Edit Verification
+
+**Read back** every edited file to confirm the change is correct.  
+Verify no accidental deletions, duplicate lines, or broken indentation.
+
+## Gate 2 — Lint Check
+
+**Run `ReadLints`** on all edited files — zero new errors introduced.  
+If errors found: fix immediately, then re-run `ReadLints`. Do not proceed until clean.
+
+## Gate 3 — Auto Test & Fix (MANDATORY for logic changes)
+
+For any change involving functions, methods, classes, APIs, or bug fixes:
+
+1. Call `smart_test` with the changed file to discover and run related tests:
+   ```
+   smart_test(file_path="<changed file>", project_dir="<project root>")
+   ```
+2. **If tests pass** → proceed to Gate 4.
+3. **If tests fail** → enter fix loop (see `auto-test-fix` Skill):
+   - Read failure output carefully
+   - Fix the code (not the test) — max 3 iterations
+   - Re-run `smart_test` after each fix
+   - If still failing after 3 attempts → report to user and stop
+4. **If no tests exist** → note "no tests found" in summary and proceed.
+5. **Skip Gate 3** only for: pure docs/comments, config-only, style-only changes.
+
+## Gate 4 — Requirements Validation
+
+**Compare result to request** — does the change actually accomplish what was asked?
+- [ ] Correct behavior implemented?
+- [ ] Edge cases handled?
+- [ ] Code style consistent with codebase?
 
 If any gate fails, fix the issue and re-verify. Do not skip gates.
+
+---
 
 ## Memory extraction (post-completion)
 
@@ -27,7 +58,9 @@ This is not mandatory for trivial tasks, but important decisions SHOULD be recor
 
 ```
 **Changes:** list of files and what changed
-**Verification:** Lint ✓ | Tests ✓ or N/A | Build ✓ or N/A
+**Verification:**
+  - Lint ✓ | Tests ✓ (N passed) or ✗ (reason) or N/A (no tests)
+  - Build ✓ or N/A
 **Memories:** saved decision X / none needed
 **Notes:** anything the user should review
 ```
