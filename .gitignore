@@ -25,7 +25,7 @@ Thumbs.db
 .cursor/memory.md
 .cursor/team-memory/
 .cursor/crons.json
-.cursor
+.cursor/
 # Local-only directories (not synced to remote)
 claude-code/
 claude-code-rust/
