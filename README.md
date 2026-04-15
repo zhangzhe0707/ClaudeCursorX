@@ -305,11 +305,11 @@ Your agent system prompt here...
 
 | 文档 | 内容 |
 |------|------|
-| [ANALYSIS.md](docs/ANALYSIS.md) | Claude Code 源码架构分析 |
-| [SKILL-ANALYSIS.md](docs/SKILL-ANALYSIS.md) | Skill 方案设计分析 |
-| [MULTI-AGENT-ANALYSIS.md](docs/MULTI-AGENT-ANALYSIS.md) | 多 Agent 可行性分析 |
-| [GAP-ANALYSIS.md](docs/GAP-ANALYSIS.md) | Claude Code vs Cursor 差距分析 |
-| [PLUGIN-ECOSYSTEM-ANALYSIS.md](docs/PLUGIN-ECOSYSTEM-ANALYSIS.md) | Claude Code 插件生态系统分析（v2.1.91） |
+| [01-GAP-ANALYSIS.md](docs/01-GAP-ANALYSIS.md) | Claude Code vs Cursor 差距分析 |
+| [02-SKILL-ANALYSIS.md](docs/02-SKILL-ANALYSIS.md) | Skill 方案设计分析 |
+| [03-MULTI-AGENT-ANALYSIS.md](docs/03-MULTI-AGENT-ANALYSIS.md) | 多 Agent 可行性分析 |
+| [04-PLUGIN-ECOSYSTEM-ANALYSIS.md](docs/04-PLUGIN-ECOSYSTEM-ANALYSIS.md) | Claude Code 插件生态系统分析（v2.1.91） |
+| [05-ANALYSIS.md](docs/05-ANALYSIS.md) | Claude Code 源码架构分析 |
 
 ## 项目结构
 
@@ -659,11 +659,11 @@ We analyzed the core architecture of Claude Code, identified the capability boun
 
 | Document | Content |
 |----------|---------|
-| [ANALYSIS.md](docs/ANALYSIS.md) | Claude Code source architecture analysis |
-| [SKILL-ANALYSIS.md](docs/SKILL-ANALYSIS.md) | Skill design analysis |
-| [MULTI-AGENT-ANALYSIS.md](docs/MULTI-AGENT-ANALYSIS.md) | Multi-agent feasibility analysis |
-| [GAP-ANALYSIS.md](docs/GAP-ANALYSIS.md) | Claude Code vs Cursor gap analysis |
-| [PLUGIN-ECOSYSTEM-ANALYSIS.md](docs/PLUGIN-ECOSYSTEM-ANALYSIS.md) | Claude Code plugin ecosystem analysis (v2.1.91) |
+| [01-GAP-ANALYSIS.md](docs/01-GAP-ANALYSIS.md) | Claude Code vs Cursor gap analysis |
+| [02-SKILL-ANALYSIS.md](docs/02-SKILL-ANALYSIS.md) | Skill design analysis |
+| [03-MULTI-AGENT-ANALYSIS.md](docs/03-MULTI-AGENT-ANALYSIS.md) | Multi-agent feasibility analysis |
+| [04-PLUGIN-ECOSYSTEM-ANALYSIS.md](docs/04-PLUGIN-ECOSYSTEM-ANALYSIS.md) | Claude Code plugin ecosystem analysis (v2.1.91) |
+| [05-ANALYSIS.md](docs/05-ANALYSIS.md) | Claude Code source architecture analysis |
 
 ### Project Structure
 
